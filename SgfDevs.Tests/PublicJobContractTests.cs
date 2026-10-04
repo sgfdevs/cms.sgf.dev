@@ -106,7 +106,7 @@ public class PublicJobContractTests
                     default: throw new Exception("Unexpected navigation " + m.Name);
                 }
             });
-            var published = Proxy<IPublishedStatusFilteringService>((_, a) => ((IEnumerable<Guid>)a![0]!).Select(k => documents[k]));
+            var published = Proxy<IPublishedContentStatusFilteringService>((_, a) => ((IEnumerable<Guid>)a![0]!).Select(k => documents[k]));
             var urls = Proxy<IPublishedUrlProvider>((_, a) => {
                 var key = a![0] is IPublishedContent c ? c.Key : (Guid)a[0]!;
                 return key == companyKey ? "/companies/custom-company/" : key == jobKey ? "/companies/custom-company/custom-job/" : "/companies/custom-company/next-job/";
