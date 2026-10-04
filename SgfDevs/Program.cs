@@ -84,7 +84,8 @@ builder.Services.AddOpenApi("sgf-public-v1", options =>
             "Directory_GetSkillNames" or
             "Directory_GetSkillFilters" or
             "Directory_Search" or
-            "PublicHome_Get";
+            "PublicHome_Get" or
+            "PublicMember_Get";
     };
 });
 builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
@@ -103,6 +104,7 @@ builder.Services.AddScoped<IPublicContentProtectionLookup, PublicContentProtecti
 builder.Services.AddScoped<PublicContentAccessGuard>();
 builder.Services.AddScoped<PublicHomeBuilder>();
 builder.Services.AddScoped<PublicHomeService>();
+builder.Services.AddScoped<PublicMemberService>();
 builder.Services.AddScoped<DirectoryHelper>();
 builder.Services.AddScoped<NewsletterHelper>();
 builder.Services.AddScoped<EventSyncImportFilter>();
