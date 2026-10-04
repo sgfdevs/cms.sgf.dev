@@ -36,7 +36,18 @@ public static class LocalBootstrapGuard
         IConfiguration configuration,
         IHostEnvironment environment)
     {
-        var options = configuration.GetSection(LocalBootstrapOptions.SectionName).Get<LocalBootstrapOptions>() ?? new LocalBootstrapOptions();
+        var isDevelopment = string.Equals(environment.EnvironmentName, Environments.Development, StringComparison.OrdinalIgnoreCase);
+        var options = new LocalBootstrapOptions();
+
+        if (isDevelopment)
+        {
+            var section = configuration.GetSection(LocalBootstrapOptions.SectionName);
+            options.Enabled = ParseOptionalBoolean(section, nameof(LocalBootstrapOptions.Enabled), defaultValue: false);
+            if (options.Enabled)
+            {
+                options.SeedFictionalContent = ParseOptionalBoolean(section, nameof(LocalBootstrapOptions.SeedFictionalContent), defaultValue: false);
+            }
+        }
 
         return Validate(new LocalBootstrapGuardContext(
             environment.EnvironmentName,
@@ -59,11 +70,6 @@ public static class LocalBootstrapGuard
 
         if (!context.Options.Enabled)
         {
-            if (context.Options.SeedFictionalContent)
-            {
-                throw new LocalBootstrapConfigurationException("SGFDevs:LocalBootstrap:SeedFictionalContent requires SGFDevs:LocalBootstrap:Enabled in Development.");
-            }
-
             return new LocalBootstrapGuardResult(true, false, false, allowedDirectory, null);
         }
 
@@ -120,8 +126,8 @@ public static class LocalBootstrapGuard
 
         EnsureNoTraversal(dataSource);
         EnsureDescendantPath(databasePath, allowedDirectory);
-        EnsureNoSymlinkInPath(appRoot, allowedDirectory, "local bootstrap directory");
-        EnsureNoSymlinkInPath(appRoot, Path.GetDirectoryName(databasePath)!, "local bootstrap database directory");
+        EnsureNoReparsePointInPath(appRoot, allowedDirectory, "local bootstrap directory");
+        EnsureNoReparsePointInPath(appRoot, Path.GetDirectoryName(databasePath)!, "local bootstrap database directory");
         EnsureDatabaseFileName(databasePath);
         EnsureSafeExistingDatabase(databasePath);
 
@@ -183,28 +189,41 @@ public static class LocalBootstrapGuard
 
     private static void EnsureSafeExistingDatabase(string databasePath)
     {
-        if (!File.Exists(databasePath))
-        {
-            return;
-        }
-
         var fileInfo = new FileInfo(databasePath);
         if (!string.IsNullOrEmpty(fileInfo.LinkTarget))
         {
             throw new LocalBootstrapConfigurationException("Local bootstrap database file cannot be a symbolic link.");
         }
 
+        if (!fileInfo.Exists)
+        {
+            return;
+        }
+
+        if (fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new LocalBootstrapConfigurationException("Local bootstrap database file cannot be a reparse point.");
+        }
+
         EnsureDatabaseFileName(fileInfo.FullName);
     }
 
-    private static void EnsureNoSymlinkInPath(string appRoot, string targetPath, string description)
+    private static void EnsureNoReparsePointInPath(string appRoot, string targetPath, string description)
     {
         var root = new DirectoryInfo(appRoot);
         for (var directory = new DirectoryInfo(targetPath); directory is not null; directory = directory.Parent)
         {
-            if (directory.Exists && !string.IsNullOrEmpty(directory.LinkTarget))
+            if (directory.Exists)
             {
-                throw new LocalBootstrapConfigurationException($"The {description} cannot include symbolic links.");
+                if (!string.IsNullOrEmpty(directory.LinkTarget))
+                {
+                    throw new LocalBootstrapConfigurationException($"The {description} cannot include symbolic links.");
+                }
+
+                if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    throw new LocalBootstrapConfigurationException($"The {description} cannot include reparse points.");
+                }
             }
 
             if (PathsEqual(directory.FullName, root.FullName))
@@ -212,6 +231,24 @@ public static class LocalBootstrapGuard
                 return;
             }
         }
+    }
+
+    private static bool ParseOptionalBoolean(IConfigurationSection section, string propertyName, bool defaultValue)
+    {
+        var key = section.Path + ConfigurationPath.KeyDelimiter + propertyName;
+        var value = section.GetSection(propertyName).Value;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return defaultValue;
+        }
+
+        if (bool.TryParse(value, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new LocalBootstrapConfigurationException($"{key} must be true or false.");
     }
 
     private static string GetFullPath(string path, string basePath)

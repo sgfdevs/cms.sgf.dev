@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using SgfDevs.Dev.LocalBootstrap;
@@ -45,19 +46,106 @@ public sealed class LocalBootstrapGuardTests
     }
 
     [Fact]
-    public void Validate_SeedFlagRequiresBootstrapOptInInDevelopment()
+    public void Validate_DisabledDevelopmentBootstrapIgnoresSeedFlag()
     {
         using var temp = TempAppRoot.Create();
 
-        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() => Validate(
+        var result = Validate(
             temp.Path,
             Environments.Development,
             enabled: false,
             seed: true,
             providerName: LocalBootstrapGuard.RequiredProviderName,
-            connectionString: SafeConnectionString(temp.Path)));
+            connectionString: SafeConnectionString(temp.Path));
 
-        Assert.Contains("SeedFictionalContent", exception.Message);
+        Assert.True(result.IsDevelopment);
+        Assert.False(result.BootstrapEnabled);
+        Assert.False(result.SeedFictionalContentEnabled);
+        Assert.Null(result.DatabasePath);
+    }
+
+    [Theory]
+    [InlineData("Production")]
+    [InlineData("Staging")]
+    [InlineData("QA")]
+    public void ValidateStartupConfiguration_IgnoresMalformedLocalBootstrapFlagsOutsideDevelopment(string environmentName)
+    {
+        using var temp = TempAppRoot.Create();
+
+        var result = ValidateStartup(temp.Path, environmentName, new Dictionary<string, string?>
+        {
+            ["SGFDevs:LocalBootstrap:Enabled"] = "not-bool",
+            ["SGFDevs:LocalBootstrap:SeedFictionalContent"] = "not-bool",
+            ["ConnectionStrings:umbracoDbDSN_ProviderName"] = "System.Data.SqlClient",
+            ["ConnectionStrings:umbracoDbDSN"] = "Server=prod;Database=umbraco"
+        });
+
+        Assert.False(result.IsDevelopment);
+        Assert.False(result.BootstrapEnabled);
+        Assert.False(result.SeedFictionalContentEnabled);
+        Assert.Null(result.DatabasePath);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("false")]
+    public void ValidateStartupConfiguration_DisabledDevelopmentIgnoresMalformedSeedFlag(string? enabledValue)
+    {
+        using var temp = TempAppRoot.Create();
+        var values = new Dictionary<string, string?>
+        {
+            ["SGFDevs:LocalBootstrap:SeedFictionalContent"] = "not-bool",
+            ["ConnectionStrings:umbracoDbDSN_ProviderName"] = "System.Data.SqlClient",
+            ["ConnectionStrings:umbracoDbDSN"] = "Server=prod;Database=umbraco"
+        };
+        if (enabledValue is not null)
+        {
+            values["SGFDevs:LocalBootstrap:Enabled"] = enabledValue;
+        }
+
+        var result = ValidateStartup(temp.Path, Environments.Development, values);
+
+        Assert.True(result.IsDevelopment);
+        Assert.False(result.BootstrapEnabled);
+        Assert.False(result.SeedFictionalContentEnabled);
+        Assert.Null(result.DatabasePath);
+    }
+
+    [Fact]
+    public void ValidateStartupConfiguration_RejectsMalformedEnabledFlagInDevelopment()
+    {
+        using var temp = TempAppRoot.Create();
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() => ValidateStartup(
+            temp.Path,
+            Environments.Development,
+            new Dictionary<string, string?>
+            {
+                ["SGFDevs:LocalBootstrap:Enabled"] = "not-bool",
+                ["ConnectionStrings:umbracoDbDSN_ProviderName"] = LocalBootstrapGuard.RequiredProviderName,
+                ["ConnectionStrings:umbracoDbDSN"] = SafeConnectionString(temp.Path)
+            }));
+
+        Assert.Contains("SGFDevs:LocalBootstrap:Enabled", exception.Message);
+    }
+
+    [Fact]
+    public void ValidateStartupConfiguration_RejectsMalformedSeedFlagOnlyAfterDevelopmentOptIn()
+    {
+        using var temp = TempAppRoot.Create();
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() => ValidateStartup(
+            temp.Path,
+            Environments.Development,
+            new Dictionary<string, string?>
+            {
+                ["SGFDevs:LocalBootstrap:Enabled"] = "true",
+                ["SGFDevs:LocalBootstrap:SeedFictionalContent"] = "not-bool",
+                ["ConnectionStrings:umbracoDbDSN_ProviderName"] = LocalBootstrapGuard.RequiredProviderName,
+                ["ConnectionStrings:umbracoDbDSN"] = SafeConnectionString(temp.Path)
+            }));
+
+        Assert.Contains("SGFDevs:LocalBootstrap:SeedFictionalContent", exception.Message);
     }
 
     [Theory]
@@ -259,6 +347,44 @@ public sealed class LocalBootstrapGuardTests
     }
 
     [Fact]
+    public void Validate_RejectsWindowsJunctionBootstrapDirectory()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var temp = TempAppRoot.Create();
+        using var outside = TempAppRoot.Create();
+        var dataDirectory = Path.Combine(temp.Path, "umbraco", "Data");
+        Directory.CreateDirectory(dataDirectory);
+        var bootstrapDirectory = Path.Combine(dataDirectory, "local-bootstrap");
+        CreateJunction(bootstrapDirectory, outside.Path);
+
+        try
+        {
+            Assert.True(new DirectoryInfo(bootstrapDirectory).Attributes.HasFlag(FileAttributes.ReparsePoint));
+
+            var exception = Assert.Throws<LocalBootstrapConfigurationException>(() => Validate(
+                temp.Path,
+                Environments.Development,
+                enabled: true,
+                seed: false,
+                providerName: LocalBootstrapGuard.RequiredProviderName,
+                connectionString: $"Data Source={Path.Combine(bootstrapDirectory, "local-bootstrap.sqlite")}"));
+
+            Assert.Matches("reparse|symbolic", exception.Message.ToLowerInvariant());
+        }
+        finally
+        {
+            if (Directory.Exists(bootstrapDirectory))
+            {
+                Directory.Delete(bootstrapDirectory);
+            }
+        }
+    }
+
+    [Fact]
     public void Validate_RejectsSymlinkedExistingBootstrapDatabase()
     {
         if (OperatingSystem.IsWindows())
@@ -286,6 +412,47 @@ public sealed class LocalBootstrapGuardTests
         Assert.Contains("symbolic link", exception.Message);
     }
 
+    [Fact]
+    public void Validate_RejectsDanglingSymlinkedBootstrapDatabase()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var temp = TempAppRoot.Create();
+        var bootstrapDirectory = Path.Combine(temp.Path, "umbraco", "Data", "local-bootstrap");
+        Directory.CreateDirectory(bootstrapDirectory);
+        var databasePath = Path.Combine(bootstrapDirectory, "local-bootstrap.sqlite");
+        File.CreateSymbolicLink(databasePath, Path.Combine(temp.Path, "missing-target.sqlite"));
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() => Validate(
+            temp.Path,
+            Environments.Development,
+            enabled: true,
+            seed: false,
+            providerName: LocalBootstrapGuard.RequiredProviderName,
+            connectionString: $"Data Source={databasePath}"));
+
+        Assert.Contains("symbolic link", exception.Message);
+    }
+
+    private static LocalBootstrapGuardResult ValidateStartup(
+        string appRoot,
+        string environmentName,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(values)
+            .Build();
+
+        return LocalBootstrapGuard.ValidateStartupConfiguration(configuration, new TestHostEnvironment
+        {
+            EnvironmentName = environmentName,
+            ContentRootPath = appRoot
+        });
+    }
+
     private static LocalBootstrapGuardResult Validate(
         string appRoot,
         string environmentName,
@@ -309,6 +476,31 @@ public sealed class LocalBootstrapGuardTests
     private static string SafeConnectionString(string appRoot)
     {
         return $"Data Source={Path.Combine(appRoot, "umbraco", "Data", "local-bootstrap", "local-bootstrap.sqlite")}";
+    }
+
+    private static void CreateJunction(string junctionPath, string targetPath)
+    {
+        var startInfo = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junctionPath}\" \"{targetPath}\"")
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start mklink.");
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    private sealed class TestHostEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Production;
+
+        public string ApplicationName { get; set; } = "SgfDevs.Tests";
+
+        public string ContentRootPath { get; set; } = Directory.GetCurrentDirectory();
+
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
     }
 
     private sealed class TempAppRoot : IDisposable
