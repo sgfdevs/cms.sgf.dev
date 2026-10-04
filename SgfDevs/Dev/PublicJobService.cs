@@ -17,7 +17,7 @@ namespace SgfDevs.Dev;
 // fields. Leave raw job/tag pickers excluded and project only the Razor page values.
 public class PublicJobService(
     IDocumentUrlService documentUrls, IUmbracoContextAccessor contexts,
-    INavigationQueryService navigation, IPublishedStatusFilteringService published,
+    IDocumentNavigationQueryService navigation, IPublishedStatusFilteringService published,
     IPublishedUrlProvider urls, PublicContentAccessGuard access)
 {
     internal static bool IsJobPath(string? path)

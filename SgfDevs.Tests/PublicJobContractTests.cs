@@ -96,7 +96,7 @@ public class PublicJobContractTests
             var cache = Proxy<IPublishedContentCache>((_, a) => { Assert.Equal(false, a![0]); return documents[(Guid)a[1]!]; });
             var context = Proxy<IUmbracoContext>((m, _) => m.Name switch { "get_Content" => cache, "get_InPreviewMode" => mode == "preview", _ => null });
             var accessor = Proxy<IUmbracoContextAccessor>((_, a) => { a![0] = context; return true; });
-            var navigation = Proxy<INavigationQueryService>((m, a) => {
+            var navigation = Proxy<IDocumentNavigationQueryService>((m, a) => {
                 var key = (Guid)a![0]!;
                 switch (m.Name) {
                     case "TryGetParentKey": a[1] = key == homeKey ? null : key == pageKey || key == companyKey || mode == "wrong-parent" ? homeKey : companyKey; return true;
