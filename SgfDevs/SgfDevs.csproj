@@ -7,7 +7,7 @@
     <PackageReference Include="AWSSDK.SecurityToken" Version="4.0.101.1" />
     <PackageReference Include="AutoMapper" Version="16.2.0" />
     <PackageReference Include="MailKit" Version="4.18.1" />
-    <PackageReference Include="Microsoft.OpenApi" Version="2.12.2" />
+    <PackageReference Include="Microsoft.OpenApi" Version="3.10.2" />
     <PackageReference Include="ReverseMarkdown" Version="6.2.1" />
     <PackageReference Include="Sentry.AspNetCore" Version="6.11.1" />
     <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
