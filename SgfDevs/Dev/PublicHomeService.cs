@@ -121,7 +121,7 @@ public class PublicHomeService
         return presentations;
     }
 
-    private async Task<IReadOnlyList<PublicHomePresenterDto>> BuildPresentersAsync(Presentation presentation)
+    internal async Task<IReadOnlyList<PublicHomePresenterDto>> BuildPresentersAsync(Presentation presentation, int imageWidth = 500)
     {
         var presenters = new List<PublicHomePresenterDto>();
 
@@ -143,7 +143,7 @@ public class PublicHomeService
 
                     var member = _memberConverter.FromContent(presenterPicker.Member);
                     var username = member.Username?.ToLowerInvariant() ?? string.Empty;
-                    var image = member.ProfileImage?.GetCropUrl(width: 500) ?? FallbackMemberImage;
+                    var image = member.ProfileImage?.GetCropUrl(width: imageWidth) ?? FallbackMemberImage;
                     presenters.Add(new PublicHomePresenterDto
                     {
                         Name = member.Name,
@@ -155,7 +155,7 @@ public class PublicHomeService
                 }
                 case NonMemberPresenter nonMemberPresenter:
                 {
-                    var image = nonMemberPresenter.ProfileImage?.GetCropUrl(width: 500) ?? FallbackMemberImage;
+                    var image = nonMemberPresenter.ProfileImage?.GetCropUrl(width: imageWidth) ?? FallbackMemberImage;
                     presenters.Add(new PublicHomePresenterDto
                     {
                         Name = nonMemberPresenter.PresenterName ?? "Presenter",
