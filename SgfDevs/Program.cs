@@ -95,7 +95,7 @@ builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
 builder.Services.AddOpenApi("sgf-member-v1", options =>
 {
     options.ShouldInclude = description => description.ActionDescriptor is ControllerActionDescriptor action &&
-        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session" or "Member_Register" or "Member_ForgotPassword" or "Member_ResetPassword";
+        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session" or "Member_Register" or "Member_ForgotPassword" or "Member_ResetPassword" or "Member_Profile" or "Member_ProfileUpdate";
     options.AddDocumentTransformer((document, _, _) =>
     {
         document.Info = new OpenApiInfo { Title = "SGF private member bridge", Version = "1.0" };
@@ -132,6 +132,7 @@ builder.Services.AddScoped<PublicContentAccessGuard>();
 builder.Services.AddScoped<PublicHomeBuilder>();
 builder.Services.AddScoped<PublicHomeService>();
 builder.Services.AddScoped<PublicMemberService>();
+builder.Services.AddScoped<MemberProfileChoices>();
 builder.Services.AddScoped<DirectoryHelper>();
 builder.Services.AddScoped<NewsletterHelper>();
 builder.Services.AddScoped<EventSyncImportFilter>();
