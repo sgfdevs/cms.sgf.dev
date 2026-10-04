@@ -1,3 +1,9 @@
+# Newsletter signup
+
+Private POST `/api/v1/member/newsletter` uses the existing bridge secret and rejects browser Origin requests. It does not require a member session. Requests have a 4 KiB ceiling and a separate aggregate limit of 20 per minute, without a queue. The legacy `name` honeypot must be null or empty; whitespace or any other value rejects the request before the provider is contacted.
+
+Set `SGFDevs:NewsletterEndpoint` and `SGFDevs:NewsletterListId` through existing private configuration. Missing values return unavailable. Trusted internal HTTP services remain supported. Local-bootstrap configuration must still leave both empty. The existing NewsletterHelper sends only email and the configured list ID, with no member/bridge/browser credentials, no redirects, a six-second timeout and a 16 KiB response ceiling. Only a successful HTTP response with `data: true` is accepted. False, malformed and failed responses return a generic retry error. Acceptance means confirmation is pending, not that delivery or subscription is proven.
+
 # Current-member profile editing
 
 Private GET and POST `/api/v1/member/profile` authenticate only the existing Identity.Application member cookie. The edit DTO rejects unknown fields. It never accepts member IDs, usernames, roles, member display tags or avatar inputs. Omitted fields stay unchanged.
