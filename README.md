@@ -71,17 +71,18 @@ For the split frontend workflow, run the CMS locally first and point the fronten
 
 This project uses Umbraco CMS 18.2.0. The Delivery API exposes only published,
 unprotected nodes with these document type aliases: `home`, `events`, `event`,
-`companies`, `groups`, and `jobs`. These are public listing pages and event dates,
-not the member directory or full event presentations. The existing Razor pages
-continue to render unchanged.
+`companies`, `company`, `groups`, `jobs`, and `page`. The existing Razor pages
+continue to render unchanged. Company details use the native Delivery item endpoint.
 
 The non-empty `Umbraco:CMS:DeliveryApi:AllowedContentTypeAliases` list excludes
 every other type, including future document types. Do not empty it. Umbraco's
-allowlist takes precedence over its denylist. Generic `page` nodes stay excluded
-because that type also covers Member and Search Results pages. Company, group,
-job, presentation, leadership, account, authentication, tag, and element types
-stay excluded pending a property and reference review. The allowed types have no
-member pickers, block lists, media pickers, content references, or compositions.
+allowlist takes precedence over its denylist. Group, job, presentation, leadership,
+account, authentication, tag, and element types stay excluded. The company-only
+Delivery converter suppresses unused `companyTags` and maps `skillTags` to public
+names and published tag GUID filter values. It rejects protected tag paths,
+preview values and non-document pickers, even when expansion is requested.
+No raw picked node properties, routes or member identities leave that converter.
+Page blocks and meta remain allowed as in the content-pages layer.
 
 Media API access and both Delivery API member authorization flows are explicitly
 disabled. Umbraco excludes protected content when member authorization is disabled.

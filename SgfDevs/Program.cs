@@ -43,6 +43,7 @@ var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddWebsite()
     .AddDeliveryApi()
     .AddComposers();
+umbracoBuilder.PropertyValueConverters().Append<CompanyTagDeliveryValueConverter>();
 LocalBootstrapTelemetryGuard.RemoveTelemetryJob(builder.Services, localBootstrapGuardResult);
 
 if (!string.IsNullOrEmpty(builder.Configuration["Umbraco:Storage:Cdn:Url"]))
@@ -139,7 +140,7 @@ builder.Services.AddScoped<MemberTagDisplayService>();
 builder.Services.AddScoped<PresentationPresenterDisplayService>();
 builder.Services.AddScoped(_ => new EventDisplayService(EventSyncTimeZoneResolver.Resolve(builder.Configuration["SGFDevs:EventTimeZoneId"])));
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddScoped<IPublicContentProtectionLookup, PublicContentProtectionLookup>();
+builder.Services.AddSingleton<IPublicContentProtectionLookup, PublicContentProtectionLookup>();
 builder.Services.AddScoped<PublicContentAccessGuard>();
 builder.Services.AddScoped<PublicHomeBuilder>();
 builder.Services.AddScoped<PublicHomeService>();

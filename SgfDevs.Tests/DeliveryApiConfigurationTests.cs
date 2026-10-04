@@ -10,7 +10,7 @@ namespace SgfDevs.Tests;
 public class DeliveryApiConfigurationTests
 {
     private static readonly string[] PublicTypes =
-        ["home", "events", "event", "companies", "groups", "jobs", "page"];
+        ["home", "events", "event", "companies", "company", "groups", "jobs", "page"];
 
     [Theory]
     [InlineData(false)]
@@ -37,7 +37,7 @@ public class DeliveryApiConfigurationTests
         }
 
         Assert.False(settings.IsAllowedContentType("futurePrivateType"));
-        foreach (var alias in new[] { "group", "company", "job", "leadership", "member", "markdown", "richTextEditor", "about" })
+        foreach (var alias in new[] { "group", "job", "leadership", "member", "markdown", "richTextEditor", "about" })
         {
             Assert.False(settings.IsAllowedContentType(alias));
         }
@@ -71,6 +71,24 @@ public class DeliveryApiConfigurationTests
             }
 
             Assert.Empty(root.Descendants("Composition"));
+            if (alias == "company")
+            {
+                Assert.Equal(["aboutText", "availableForHire", "companyTags", "facebookUrl", "featuredEmbed",
+                    "featuredImage", "headline", "image", "instagramUrl", "isFoundingSponsor", "isSponsor",
+                    "linkedInUrl", "location", "skillTags", "twitterUrl", "umbracoUrlName", "websiteUrl"],
+                    properties.Select(p => p.Element("Alias")!.Value).Order(StringComparer.Ordinal));
+                Assert.All(properties, p => Assert.Contains(p.Element("Type")!.Value,
+                    new[] { "Umbraco.MarkdownEditor", "Umbraco.TrueFalse", "Umbraco.TextBox", "Umbraco.TextArea",
+                        "Umbraco.MediaPicker3", "Umbraco.MultiNodeTreePicker" }));
+                foreach (var picker in new[] { "CompanyTagsPicker", "SkillTagsPicker" })
+                {
+                    var config = XDocument.Load(Path.Combine(ProjectDirectory, $"uSync/v18/DataTypes/{picker}.config"));
+                    using var json = JsonDocument.Parse(config.Root!.Element("Config")!.Value);
+                    Assert.Equal("content", json.RootElement.GetProperty("startNode").GetProperty("type").GetString());
+                    Assert.Equal("d3afa3d9-621f-499e-bb8c-e58763df30ef", json.RootElement.GetProperty("filter").GetString());
+                }
+                continue;
+            }
             if (alias == "event")
             {
                 Assert.Equal(["date", "helpTextPresentations"], properties.Select(p => p.Element("Alias")!.Value).Order());
