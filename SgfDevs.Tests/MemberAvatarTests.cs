@@ -190,7 +190,7 @@ public class MemberAvatarTests
         {
             var file = new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "caller.svg");
             controller.Request.Form = new FormCollection(extra ? new() { ["memberId"] = "foreign" } : new(), new FormFileCollection { file });
-            return controller.Upload(new() { File = file });
+            return controller.Upload(file);
         }
         private sealed class FakeFiles(Fixture fixture, IMemberService members, IMediaService media, MediaFileManager files,
             MediaUrlGeneratorCollection generators, IShortStringHelper strings, ICoreScopeProvider scopes, IJsonSerializer json,

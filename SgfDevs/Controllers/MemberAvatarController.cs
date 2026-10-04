@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.ComponentModel.DataAnnotations;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
@@ -31,19 +32,19 @@ public sealed class MemberAvatarController(
     [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<ActionResult<MemberAvatarResult>> Upload([FromForm] MemberAvatarRequest request)
+    public async Task<ActionResult<MemberAvatarResult>> Upload([FromForm(Name = "file"), Required] IFormFile file)
     {
         var auth = await HttpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
         HttpContext.User = auth.Succeeded && auth.Principal is not null ? auth.Principal : new();
         var member = auth.Succeeded ? await manager.GetCurrentMemberAsync() : null;
         if (member is null) return Unauthorized();
         var form = await Request.ReadFormAsync(HttpContext.RequestAborted);
-        if (Request.Query.Count != 0 || form.Count != 0 || form.Files.Count != 1 || form.Files[0].Name != "file" || request.File is null || request.File.Length == 0)
+        if (Request.Query.Count != 0 || form.Count != 0 || form.Files.Count != 1 || form.Files[0].Name != "file" || file is null || file.Length == 0)
             return BadRequest();
-        if (request.File.Length > MemberAvatarImage.MaxBytes) return StatusCode(413);
+        if (file.Length > MemberAvatarImage.MaxBytes) return StatusCode(413);
         try
         {
-            using var source = request.File.OpenReadStream();
+            using var source = file.OpenReadStream();
             var prepared = await MemberAvatarImage.PrepareAsync(source, HttpContext.RequestAborted);
             using var content = prepared.Content;
             var url = await avatars.SaveAsync(member.Key, content, prepared.Extension);
