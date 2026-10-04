@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -23,6 +26,7 @@ LOCAL_S3_ENDPOINT = "http://127.0.0.1:8333"
 LOCAL_S3_BUCKET = "sgf-dev-local"
 LOCAL_S3_ACCESS_KEY = "sgf-dev-local"
 LOCAL_S3_SECRET_KEY = "sgf-dev-local-password"
+POLICY_VERSION = 1
 
 
 class BootstrapError(RuntimeError):
@@ -46,6 +50,8 @@ def main() -> int:
         config_path = bootstrap_dir / CONFIG_FILE_NAME
 
         validate_bootstrap_paths(app_root, bootstrap_dir, database_path, config_path)
+        require_executable("docker")
+        require_executable("dotnet")
         ensure_bootstrap_files(bootstrap_dir, database_path, config_path)
 
         print(f"Local bootstrap config: {config_path}")
@@ -155,37 +161,48 @@ def validate_existing_config(config_path: Path, database_path: Path) -> None:
     except json.JSONDecodeError as error:
         raise BootstrapError(f"private config is not valid JSON: {error}") from error
 
-    metadata = config.get("SGFDevs", {}).get("LocalBootstrap", {})
-    if metadata.get("CreatedBy") != CREATED_BY or metadata.get("Enabled") is not True:
-        raise BootstrapError("private config is not an owned SGF local bootstrap config")
-    if metadata.get("SeedFictionalContent") is not False:
-        raise BootstrapError("fictional seed content must stay disabled for this install-script layer")
+    validate_generated_policy(config, database_path)
 
-    connection_string = config.get("ConnectionStrings", {}).get("umbracoDbDSN", "")
-    expected = f"Data Source={database_path};Cache=Shared"
-    if connection_string != expected:
-        raise BootstrapError("private config points at a different database path")
 
-    provider = config.get("ConnectionStrings", {}).get("umbracoDbDSN_ProviderName", "")
-    if provider.lower() != "microsoft.data.sqlite":
-        raise BootstrapError("private config must use Microsoft.Data.Sqlite")
+def validate_generated_policy(config: object, database_path: Path) -> None:
+    # This signature detects drift in a generated file. It is not a boundary against
+    # the same OS user editing this script, the config, or both.
+    if not isinstance(config, dict):
+        raise BootstrapError("private config must be a JSON object")
 
-    aws = config.get("AWS", {})
-    umbraco = config.get("Umbraco", {})
-    media = umbraco.get("Storage", {}).get("AWSS3", {}).get("Media", {})
-    if aws.get("ServiceURL") != LOCAL_S3_ENDPOINT or aws.get("ForcePathStyle") is not True:
-        raise BootstrapError("private config must keep S3 writes on the loopback SeaweedFS endpoint")
-    if media.get("BucketName") != LOCAL_S3_BUCKET:
-        raise BootstrapError("private config must use the local SeaweedFS bucket")
-    hmac_secret = umbraco.get("CMS", {}).get("Imaging", {}).get("HMACSecretKey")
+    password = read_nested_string(config, ["Umbraco", "CMS", "Unattended", "UnattendedUserPassword"])
+    hmac_secret = read_nested_string(config, ["Umbraco", "CMS", "Imaging", "HMACSecretKey"])
+    signature = read_nested_string(config, ["SGFDevs", "LocalBootstrap", "PolicySignature"])
+    if len(password) < 30:
+        raise BootstrapError("private config must keep the generated local admin password")
     if not hmac_secret:
-        raise BootstrapError("private config must contain a local imaging HMAC secret so Umbraco does not write one to tracked appsettings")
+        raise BootstrapError("private config must keep the generated local imaging HMAC secret")
+    if not signature:
+        raise BootstrapError("private config is missing its local bootstrap policy signature")
+
+    unsigned_config = copy.deepcopy(config)
+    unsigned_config["SGFDevs"]["LocalBootstrap"].pop("PolicySignature", None)
+    expected_signature = sign_policy(unsigned_config, hmac_secret)
+    if not hmac.compare_digest(signature, expected_signature):
+        raise BootstrapError("private config local bootstrap policy signature does not match")
+
+    expected = build_config(database_path, password, hmac_secret)
+    expected["SGFDevs"]["LocalBootstrap"]["PolicySignature"] = signature
+    if config != expected:
+        raise BootstrapError("private config no longer matches the generated local bootstrap safety policy")
 
 
-def write_new_config(config_path: Path, database_path: Path) -> None:
-    password = secrets.token_urlsafe(30)
-    hmac_secret = base64.b64encode(secrets.token_bytes(64)).decode("ascii")
-    config = {
+def read_nested_string(value: object, keys: list[str]) -> str:
+    current = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return ""
+        current = current.get(key)
+    return current if isinstance(current, str) else ""
+
+
+def build_config(database_path: Path, password: str, hmac_secret: str) -> dict[str, object]:
+    return {
         "SGFDevs": {
             "EventSyncEnabled": False,
             "NewsletterEndpoint": "",
@@ -194,6 +211,7 @@ def write_new_config(config_path: Path, database_path: Path) -> None:
                 "Enabled": True,
                 "SeedFictionalContent": False,
                 "CreatedBy": CREATED_BY,
+                "PolicyVersion": POLICY_VERSION,
             },
             "Sessionize": {"BaseUrl": ""},
             "MeetupApi": {"BaseUrl": "", "ClientId": "", "ClientSecret": ""},
@@ -232,7 +250,7 @@ def write_new_config(config_path: Path, database_path: Path) -> None:
                     "UnattendedUserEmail": "local-bootstrap-admin@sgf.dev.invalid",
                     "UnattendedUserPassword": password,
                     "UnattendedTelemetryLevel": "Minimal",
-                }
+                },
             },
         },
         "uSync": {
@@ -244,6 +262,18 @@ def write_new_config(config_path: Path, database_path: Path) -> None:
             }
         },
     }
+
+
+def sign_policy(config: dict[str, object], hmac_secret: str) -> str:
+    payload = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(hmac_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def write_new_config(config_path: Path, database_path: Path) -> None:
+    password = secrets.token_urlsafe(30)
+    hmac_secret = base64.b64encode(secrets.token_bytes(64)).decode("ascii")
+    config = build_config(database_path, password, hmac_secret)
+    config["SGFDevs"]["LocalBootstrap"]["PolicySignature"] = sign_policy(config, hmac_secret)
 
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
@@ -273,10 +303,13 @@ def build_child_environment(parent_env: os._Environ[str], config_path: Path, por
     return env
 
 
+def require_executable(name: str) -> None:
+    if shutil.which(name) is None:
+        raise BootstrapError(f"required executable not found on PATH: {name}")
+
+
 def run_checked(command: list[str], cwd: Path) -> None:
-    executable = shutil.which(command[0])
-    if executable is None:
-        raise BootstrapError(f"required executable not found on PATH: {command[0]}")
+    require_executable(command[0])
     completed = subprocess.run(command, cwd=cwd, check=False)
     if completed.returncode != 0:
         raise BootstrapError(f"command failed with exit code {completed.returncode}: {' '.join(command)}")

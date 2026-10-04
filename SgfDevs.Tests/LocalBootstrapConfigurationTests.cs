@@ -47,19 +47,19 @@ public sealed class LocalBootstrapConfigurationTests
     }
 
     [Fact]
-    public void LocalBootstrapLoader_RefusesExplicitConfigOutsideDevelopment()
+    public void LocalBootstrapLoader_IgnoresExplicitConfigOutsideDevelopment()
     {
         using var temp = TempAppRoot.Create();
         var configPath = temp.CreateLocalConfig();
         var configuration = new ConfigurationManager();
         configuration[LocalBootstrapConfigurationLoader.ConfigPathEnvironmentVariable] = configPath;
 
-        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() =>
-            LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(
-                configuration,
-                new TestHostEnvironment(Environments.Production, Path.Combine(temp.Path, "SgfDevs"))));
+        var loaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(
+            configuration,
+            new TestHostEnvironment(Environments.Production, Path.Combine(temp.Path, "SgfDevs")));
 
-        Assert.Contains("Development", exception.Message);
+        Assert.False(loaded);
+        Assert.Null(configuration.GetConnectionString("umbracoDbDSN"));
     }
 
     [Fact]
@@ -106,15 +106,20 @@ public sealed class LocalBootstrapConfigurationTests
         var loaderIndex = program.IndexOf("LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration", StringComparison.Ordinal);
         var guardIndex = program.IndexOf("LocalBootstrapGuard.ValidateStartupConfiguration", StringComparison.Ordinal);
         var createBuilderIndex = program.IndexOf("builder.CreateUmbracoBuilder()", StringComparison.Ordinal);
+        var effectivePolicyIndex = program.IndexOf("LocalBootstrapEffectivePolicyValidator.Validate", StringComparison.Ordinal);
+        var telemetryGuardIndex = program.IndexOf("LocalBootstrapTelemetryGuard.RemoveTelemetryJob", StringComparison.Ordinal);
         var buildIndex = program.IndexOf("umbracoBuilder.Build()", StringComparison.Ordinal);
         var bootIndex = program.IndexOf("app.BootUmbracoAsync()", StringComparison.Ordinal);
 
         Assert.True(loaderIndex >= 0, "Program.cs must load explicit local bootstrap config before the guard.");
         Assert.True(guardIndex >= 0, "Program.cs must call the local bootstrap guard.");
-        Assert.True(loaderIndex < guardIndex, "The local bootstrap config loader must run before the guard validates effective settings.");
-        Assert.True(guardIndex < createBuilderIndex, "The local bootstrap guard must run before CreateUmbracoBuilder.");
-        Assert.True(guardIndex < buildIndex, "The local bootstrap guard must run before UmbracoBuilder.Build.");
-        Assert.True(guardIndex < bootIndex, "The local bootstrap guard must run before BootUmbracoAsync.");
+        Assert.True(loaderIndex < guardIndex, "The local bootstrap config loader must run before the DB guard.");
+        Assert.True(guardIndex < effectivePolicyIndex, "The DB guard must run before complete effective-policy validation.");
+        Assert.True(effectivePolicyIndex < createBuilderIndex, "Complete effective-policy validation must run before CreateUmbracoBuilder.");
+        Assert.True(telemetryGuardIndex > createBuilderIndex, "The local telemetry guard must run after Umbraco registers background jobs.");
+        Assert.True(telemetryGuardIndex < buildIndex, "The local telemetry guard must run before UmbracoBuilder.Build.");
+        Assert.True(effectivePolicyIndex < buildIndex, "Complete effective-policy validation must run before UmbracoBuilder.Build.");
+        Assert.True(effectivePolicyIndex < bootIndex, "Complete effective-policy validation must run before BootUmbracoAsync.");
     }
 
     private static IConfiguration LoadConfiguration(bool development)

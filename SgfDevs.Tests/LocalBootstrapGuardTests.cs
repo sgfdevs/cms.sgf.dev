@@ -1,7 +1,11 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SgfDevs.Dev.LocalBootstrap;
+using Umbraco.Cms.Core.Sync;
+using Umbraco.Cms.Infrastructure.BackgroundJobs;
+using Umbraco.Cms.Infrastructure.BackgroundJobs.Jobs;
 using Xunit;
 
 namespace SgfDevs.Tests;
@@ -146,6 +150,112 @@ public sealed class LocalBootstrapGuardTests
             }));
 
         Assert.Contains("SGFDevs:LocalBootstrap:SeedFictionalContent", exception.Message);
+    }
+
+    [Fact]
+    public void ValidateStartupConfiguration_AcceptsCompleteGeneratedEffectiveBootstrapPolicy()
+    {
+        using var temp = TempAppRoot.Create();
+
+        var result = ValidateStartup(temp.Path, Environments.Development, CompleteEffectivePolicy(temp.Path));
+
+        Assert.True(result.BootstrapEnabled);
+        Assert.False(result.SeedFictionalContentEnabled);
+        Assert.EndsWith(Path.Combine("umbraco", "Data", "local-bootstrap", "local-bootstrap.sqlite"), result.DatabasePath);
+    }
+
+    [Fact]
+    public void ValidateStartupConfiguration_RejectsDirectEnabledBootstrapWithoutGeneratedPolicy()
+    {
+        using var temp = TempAppRoot.Create();
+        var values = new Dictionary<string, string?>
+        {
+            ["SGFDevs:LocalBootstrap:Enabled"] = "true",
+            ["SGFDevs:LocalBootstrap:SeedFictionalContent"] = "false",
+            ["ConnectionStrings:umbracoDbDSN_ProviderName"] = LocalBootstrapGuard.RequiredProviderName,
+            ["ConnectionStrings:umbracoDbDSN"] = SafeSharedConnectionString(temp.Path),
+            ["urls"] = "http://127.0.0.1:5099"
+        };
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() =>
+            ValidateStartup(temp.Path, Environments.Development, values));
+
+        Assert.Contains("CreatedBy", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("AWS_PROFILE", "prod", "AWS_PROFILE")]
+    [InlineData("SGFDevs:NewsletterEndpoint", "https://example.invalid/newsletter", "NewsletterEndpoint")]
+    [InlineData("SGFDevs:Sessionize:BaseUrl", "https://sessionize.com", "Sessionize")]
+    [InlineData("Umbraco:Storage:AWSS3:Media:BucketName", "prod-media", "BucketName")]
+    [InlineData("Umbraco:CMS:Unattended:UnattendedUserEmail", "admin@example.com", "UnattendedUserEmail")]
+    [InlineData("uSync:Settings:ImportOnFirstBoot", "true", "ImportOnFirstBoot")]
+    [InlineData("uSync:Settings:FirstBootGroup", "All", "FirstBootGroup")]
+    [InlineData("uSync:Settings:ImportAtStartup", "All", "ImportAtStartup")]
+    [InlineData("uSync:Settings:ExportOnSave", "All", "ExportOnSave")]
+    public void ValidateStartupConfiguration_RejectsEffectiveBootstrapPolicyTampering(string key, string value, string expectedMessage)
+    {
+        using var temp = TempAppRoot.Create();
+        var values = CompleteEffectivePolicy(temp.Path);
+        values[key] = value;
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() =>
+            ValidateStartup(temp.Path, Environments.Development, values));
+
+        Assert.Contains(expectedMessage, exception.Message);
+    }
+
+    [Theory]
+    [InlineData("http://0.0.0.0:5099")]
+    [InlineData("https://127.0.0.1:5099")]
+    [InlineData("http://example.invalid:5099")]
+    public void ValidateStartupConfiguration_RejectsNonLoopbackBootstrapWebUrl(string url)
+    {
+        using var temp = TempAppRoot.Create();
+        var values = CompleteEffectivePolicy(temp.Path);
+        values["urls"] = url;
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() =>
+            ValidateStartup(temp.Path, Environments.Development, values));
+
+        Assert.Contains("loopback", exception.Message);
+    }
+
+    [Fact]
+    public void TelemetryGuard_RemovesOnlyReportSiteJobForEnabledLocalBootstrap()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<ReportSiteJob>();
+        services.AddSingleton<IRecurringBackgroundJob, ReportSiteJob>();
+        services.AddSingleton<IRecurringBackgroundJob, TestRecurringJob>();
+
+        LocalBootstrapTelemetryGuard.RemoveTelemetryJob(services, new LocalBootstrapGuardResult(
+            IsDevelopment: true,
+            BootstrapEnabled: true,
+            SeedFictionalContentEnabled: false,
+            AllowedDirectory: "/tmp/local-bootstrap",
+            DatabasePath: "/tmp/local-bootstrap/local-bootstrap.sqlite"));
+
+        Assert.DoesNotContain(services, service => service.ServiceType == typeof(ReportSiteJob) || service.ImplementationType == typeof(ReportSiteJob));
+        Assert.Contains(services, service => service.ImplementationType == typeof(TestRecurringJob));
+    }
+
+    [Fact]
+    public void TelemetryGuard_DoesNotChangeNormalStartupJobs()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<ReportSiteJob>();
+        services.AddSingleton<IRecurringBackgroundJob, ReportSiteJob>();
+
+        LocalBootstrapTelemetryGuard.RemoveTelemetryJob(services, new LocalBootstrapGuardResult(
+            IsDevelopment: true,
+            BootstrapEnabled: false,
+            SeedFictionalContentEnabled: false,
+            AllowedDirectory: "/tmp/local-bootstrap",
+            DatabasePath: null));
+
+        Assert.Contains(services, service => service.ServiceType == typeof(ReportSiteJob));
+        Assert.Contains(services, service => service.ImplementationType == typeof(ReportSiteJob));
     }
 
     [Theory]
@@ -446,11 +556,13 @@ public sealed class LocalBootstrapGuardTests
             .AddInMemoryCollection(values)
             .Build();
 
-        return LocalBootstrapGuard.ValidateStartupConfiguration(configuration, new TestHostEnvironment
+        var result = LocalBootstrapGuard.ValidateStartupConfiguration(configuration, new TestHostEnvironment
         {
             EnvironmentName = environmentName,
             ContentRootPath = appRoot
         });
+        LocalBootstrapEffectivePolicyValidator.Validate(configuration, result);
+        return result;
     }
 
     private static LocalBootstrapGuardResult Validate(
@@ -478,6 +590,61 @@ public sealed class LocalBootstrapGuardTests
         return $"Data Source={Path.Combine(appRoot, "umbraco", "Data", "local-bootstrap", "local-bootstrap.sqlite")}";
     }
 
+    private static string SafeSharedConnectionString(string appRoot)
+    {
+        return SafeConnectionString(appRoot) + ";Cache=Shared";
+    }
+
+    private static Dictionary<string, string?> CompleteEffectivePolicy(string appRoot)
+    {
+        return new Dictionary<string, string?>
+        {
+            ["SGFDevs:LocalBootstrap:Enabled"] = "true",
+            ["SGFDevs:LocalBootstrap:SeedFictionalContent"] = "false",
+            ["SGFDevs:LocalBootstrap:CreatedBy"] = LocalBootstrapEffectivePolicyValidator.RequiredCreatedBy,
+            ["SGFDevs:LocalBootstrap:PolicyVersion"] = "1",
+            ["SGFDevs:EventSyncEnabled"] = "false",
+            ["SGFDevs:NewsletterEndpoint"] = "",
+            ["SGFDevs:NewsletterListId"] = "",
+            ["SGFDevs:Sessionize:BaseUrl"] = "",
+            ["SGFDevs:MeetupApi:BaseUrl"] = "",
+            ["SGFDevs:MeetupApi:ClientId"] = "",
+            ["SGFDevs:MeetupApi:ClientSecret"] = "",
+            ["SGFDevs:Site:AnalyticsEnabled"] = "false",
+            ["SGFDevs:Site:SearchIndexingEnabled"] = "false",
+            ["ConnectionStrings:umbracoDbDSN"] = SafeSharedConnectionString(appRoot),
+            ["ConnectionStrings:umbracoDbDSN_ProviderName"] = LocalBootstrapGuard.RequiredProviderName,
+            ["urls"] = "http://127.0.0.1:5099",
+            ["AWS:Region"] = LocalBootstrapEffectivePolicyValidator.RequiredAwsRegion,
+            ["AWS:ServiceURL"] = LocalBootstrapEffectivePolicyValidator.RequiredS3Endpoint,
+            ["AWS:ForcePathStyle"] = "true",
+            ["AWS_ACCESS_KEY_ID"] = LocalBootstrapEffectivePolicyValidator.RequiredS3AccessKey,
+            ["AWS_SECRET_ACCESS_KEY"] = LocalBootstrapEffectivePolicyValidator.RequiredS3SecretKey,
+            ["AWS_SESSION_TOKEN"] = "",
+            ["AWS_PROFILE"] = "",
+            ["AWS_DEFAULT_PROFILE"] = "",
+            ["AWS_EC2_METADATA_DISABLED"] = "true",
+            ["Umbraco:Storage:AWSS3:Media:BucketName"] = LocalBootstrapEffectivePolicyValidator.RequiredS3Bucket,
+            ["Umbraco:Storage:AWSS3:Media:Region"] = LocalBootstrapEffectivePolicyValidator.RequiredAwsRegion,
+            ["Umbraco:Storage:AWSS3:Media:MediaBucketPrefix"] = "media",
+            ["Umbraco:Storage:AWSS3:Media:CacheBucketPrefix"] = "cache",
+            ["Umbraco:Storage:AWSS3:Media:CacheRetention:Enabled"] = "false",
+            ["Umbraco:CMS:Unattended:InstallUnattended"] = "true",
+            ["Umbraco:CMS:Unattended:UpgradeUnattended"] = "true",
+            ["Umbraco:CMS:Unattended:PackageMigrationsUnattended"] = "true",
+            ["Umbraco:CMS:Unattended:UnattendedUserName"] = LocalBootstrapEffectivePolicyValidator.RequiredAdminName,
+            ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = LocalBootstrapEffectivePolicyValidator.RequiredAdminEmail,
+            ["Umbraco:CMS:Unattended:UnattendedUserPassword"] = "generated-local-password-with-enough-length",
+            ["Umbraco:CMS:Unattended:UnattendedTelemetryLevel"] = "Minimal",
+            ["Umbraco:CMS:Imaging:HMACSecretKey"] = "generated-local-hmac-secret",
+            ["uSync:Settings:ImportOnFirstBoot"] = "false",
+            ["uSync:Settings:FirstBootGroup"] = "",
+            ["uSync:Settings:ImportAtStartup"] = "None",
+            ["uSync:Settings:ExportAtStartup"] = "None",
+            ["uSync:Settings:ExportOnSave"] = "None",
+        };
+    }
+
     private static void CreateJunction(string junctionPath, string targetPath)
     {
         var startInfo = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junctionPath}\" \"{targetPath}\"")
@@ -490,6 +657,33 @@ public sealed class LocalBootstrapGuardTests
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start mklink.");
         process.WaitForExit();
         Assert.Equal(0, process.ExitCode);
+    }
+
+    private sealed class TestRecurringJob : IRecurringBackgroundJob
+    {
+        public TimeSpan Period => TimeSpan.FromMinutes(5);
+
+        public TimeSpan Delay => TimeSpan.FromMinutes(5);
+
+        public TimeSpan IgnoredDelay => TimeSpan.FromMinutes(1);
+
+        public ServerRole[] ServerRoles => [ServerRole.Single];
+
+        public event EventHandler? PeriodChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event EventHandler? IgnoredDelayChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public Task RunJobAsync() => Task.CompletedTask;
+
+        public Task RunJobAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class TestHostEnvironment : IHostEnvironment

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace SgfDevs.Tests;
@@ -38,6 +39,8 @@ public sealed class LocalBootstrapScriptTests
         Assert.DoesNotContain(hmacSecret!, result.Stderr);
         Assert.True(root.GetProperty("SGFDevs").GetProperty("LocalBootstrap").GetProperty("Enabled").GetBoolean());
         Assert.False(root.GetProperty("SGFDevs").GetProperty("LocalBootstrap").GetProperty("SeedFictionalContent").GetBoolean());
+        Assert.Equal(1, root.GetProperty("SGFDevs").GetProperty("LocalBootstrap").GetProperty("PolicyVersion").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("SGFDevs").GetProperty("LocalBootstrap").GetProperty("PolicySignature").GetString()));
         Assert.Equal("Data Source=" + temp.DatabasePath + ";Cache=Shared", root.GetProperty("ConnectionStrings").GetProperty("umbracoDbDSN").GetString());
         Assert.Equal("Microsoft.Data.Sqlite", root.GetProperty("ConnectionStrings").GetProperty("umbracoDbDSN_ProviderName").GetString());
         Assert.Equal("http://127.0.0.1:8333", root.GetProperty("AWS").GetProperty("ServiceURL").GetString());
@@ -64,6 +67,8 @@ public sealed class LocalBootstrapScriptTests
         Assert.Contains("AWS_SECRET_ACCESS_KEY=sgf-dev-local-password", childEnv);
         Assert.Contains("AWS_SESSION_TOKEN=", childEnv);
         Assert.Contains("AWS_PROFILE=", childEnv);
+        Assert.Contains("AWS_DEFAULT_PROFILE=", childEnv);
+        Assert.Contains("AWS_EC2_METADATA_DISABLED=true", childEnv);
     }
 
     [Fact]
@@ -112,27 +117,69 @@ public sealed class LocalBootstrapScriptTests
         Assert.Equal(password, secondDocument.RootElement.GetProperty("Umbraco").GetProperty("CMS").GetProperty("Unattended").GetProperty("UnattendedUserPassword").GetString());
     }
 
-    [Fact]
-    public async Task Script_RefusesConfigThatCouldWriteMediaOffLoopback()
+    [Theory]
+    [InlineData("uSync.Settings.ImportOnFirstBoot", true)]
+    [InlineData("uSync.Settings.FirstBootGroup", "All")]
+    [InlineData("uSync.Settings.ImportAtStartup", "All")]
+    [InlineData("SGFDevs.NewsletterEndpoint", "https://example.invalid/newsletter")]
+    [InlineData("SGFDevs.Sessionize.BaseUrl", "https://sessionize.com")]
+    [InlineData("AWS.Profile", "prod")]
+    [InlineData("Umbraco.CMS.Unattended.UnattendedUserPassword", "changed-password")]
+    public async Task Script_RefusesTamperedOwnedConfig(string dottedPath, object value)
     {
         using var temp = TempScriptWorkspace.Create();
-        Directory.CreateDirectory(temp.BootstrapDirectory);
-        await File.WriteAllTextAsync(temp.ConfigPath, """
-        {
-          "SGFDevs": { "LocalBootstrap": { "Enabled": true, "SeedFictionalContent": false, "CreatedBy": "scripts/bootstrap-local-cms.py" } },
-          "ConnectionStrings": { "umbracoDbDSN": "Data Source=DATABASE;Cache=Shared", "umbracoDbDSN_ProviderName": "Microsoft.Data.Sqlite" },
-          "AWS": { "ServiceURL": "https://s3.amazonaws.com", "ForcePathStyle": false },
-          "Umbraco": { "Storage": { "AWSS3": { "Media": { "BucketName": "prod" } } } }
-        }
-        """.Replace("DATABASE", temp.DatabasePath.Replace("\\", "\\\\")));
+        var first = await temp.RunScriptAsync();
+        Assert.Equal(0, first.ExitCode);
+        File.Delete(temp.DockerArgsPath);
+        File.Delete(temp.DotnetArgsPath);
+
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(temp.ConfigPath))!.AsObject();
+        SetJsonValue(root, dottedPath.Split('.'), JsonValue.Create(value)!);
+        await File.WriteAllTextAsync(temp.ConfigPath, root.ToJsonString() + "\n");
         File.SetUnixFileMode(temp.ConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
         var result = await temp.RunScriptAsync();
 
         Assert.Equal(2, result.ExitCode);
-        Assert.Contains("loopback SeaweedFS", result.Stderr);
+        Assert.Matches("policy signature|generated local admin password", result.Stderr);
         Assert.False(File.Exists(temp.DockerArgsPath));
         Assert.False(File.Exists(temp.DotnetArgsPath));
+    }
+
+    [Theory]
+    [InlineData("docker")]
+    [InlineData("dotnet")]
+    public async Task Script_ValidatesExecutablesBeforeCreatingPrivateConfig(string executableName)
+    {
+        using var temp = TempScriptWorkspace.Create();
+        File.Delete(Path.Combine(temp.FakeBin, executableName));
+
+        var result = await temp.RunScriptAsync(includeSystemPath: false);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains($"required executable not found on PATH: {executableName}", result.Stderr);
+        Assert.False(File.Exists(temp.ConfigPath));
+        Assert.False(Directory.Exists(temp.BootstrapDirectory));
+        Assert.False(File.Exists(temp.DockerArgsPath));
+        Assert.False(File.Exists(temp.DotnetArgsPath));
+    }
+
+    private static void SetJsonValue(JsonObject root, IReadOnlyList<string> path, JsonNode value)
+    {
+        JsonObject current = root;
+        for (var index = 0; index < path.Count - 1; index++)
+        {
+            var key = path[index];
+            if (current[key] is not JsonObject next)
+            {
+                next = new JsonObject();
+                current[key] = next;
+            }
+
+            current = next;
+        }
+
+        current[path[^1]] = value;
     }
 
     private sealed class TempScriptWorkspace : IDisposable
@@ -174,14 +221,16 @@ public sealed class LocalBootstrapScriptTests
             return workspace;
         }
 
-        public async Task<ScriptRunResult> RunScriptAsync(Dictionary<string, string>? extraEnvironment = null)
+        public async Task<ScriptRunResult> RunScriptAsync(
+            Dictionary<string, string>? extraEnvironment = null,
+            bool includeSystemPath = true)
         {
             if (OperatingSystem.IsWindows())
             {
                 throw new PlatformNotSupportedException("The bootstrap script test uses POSIX fake executables.");
             }
 
-            var startInfo = new ProcessStartInfo("python3")
+            var startInfo = new ProcessStartInfo(FindPython())
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -191,7 +240,9 @@ public sealed class LocalBootstrapScriptTests
             startInfo.ArgumentList.Add(Path.Combine(SourceRepoRoot, "scripts", "bootstrap-local-cms.py"));
             startInfo.ArgumentList.Add("--repo-root");
             startInfo.ArgumentList.Add(RepoRoot);
-            startInfo.Environment["PATH"] = FakeBin + Path.PathSeparator + (startInfo.Environment["PATH"] ?? string.Empty);
+            startInfo.Environment["PATH"] = includeSystemPath
+                ? FakeBin + Path.PathSeparator + (startInfo.Environment["PATH"] ?? string.Empty)
+                : FakeBin;
             startInfo.Environment["FAKE_DOCKER_ARGS"] = DockerArgsPath;
             startInfo.Environment["FAKE_DOTNET_ARGS"] = DotnetArgsPath;
             startInfo.Environment["FAKE_DOTNET_ENV"] = DotnetEnvPath;
@@ -212,15 +263,38 @@ public sealed class LocalBootstrapScriptTests
             return new ScriptRunResult(process.ExitCode, stdout, stderr);
         }
 
+        private static string FindPython()
+        {
+            foreach (var candidate in new[] { "/usr/bin/python3", "/usr/local/bin/python3" })
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            var pathDirectories = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator);
+            foreach (var directory in pathDirectories)
+            {
+                var candidate = Path.Combine(directory, "python3");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return "python3";
+        }
+
         private void WriteFakeExecutables()
         {
             File.WriteAllText(Path.Combine(FakeBin, "docker"), """
-            #!/usr/bin/env bash
+            #!/bin/sh
             printf '%s\n' "$@" > "$FAKE_DOCKER_ARGS"
             exit 0
             """);
             File.WriteAllText(Path.Combine(FakeBin, "dotnet"), """
-            #!/usr/bin/env bash
+            #!/bin/sh
             printf '%s\n' "$@" > "$FAKE_DOTNET_ARGS"
             {
               printf 'ASPNETCORE_ENVIRONMENT=%s\n' "$ASPNETCORE_ENVIRONMENT"
@@ -231,6 +305,8 @@ public sealed class LocalBootstrapScriptTests
               printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$AWS_SECRET_ACCESS_KEY"
               printf 'AWS_SESSION_TOKEN=%s\n' "$AWS_SESSION_TOKEN"
               printf 'AWS_PROFILE=%s\n' "$AWS_PROFILE"
+              printf 'AWS_DEFAULT_PROFILE=%s\n' "$AWS_DEFAULT_PROFILE"
+              printf 'AWS_EC2_METADATA_DISABLED=%s\n' "$AWS_EC2_METADATA_DISABLED"
             } > "$FAKE_DOTNET_ENV"
             exit 0
             """);

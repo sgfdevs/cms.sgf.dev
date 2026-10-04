@@ -22,8 +22,7 @@ public static class LocalBootstrapConfigurationLoader
 
         if (!string.Equals(environment.EnvironmentName, Environments.Development, StringComparison.OrdinalIgnoreCase))
         {
-            throw new LocalBootstrapConfigurationException(
-                $"{ConfigPathEnvironmentVariable} can only be used when the effective environment is Development.");
+            return false;
         }
 
         var configPath = ValidateConfigPath(environment.ContentRootPath, configuredPath);

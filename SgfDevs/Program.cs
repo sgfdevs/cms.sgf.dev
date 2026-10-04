@@ -31,13 +31,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseSentry();
 
 LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
-LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
+var localBootstrapGuardResult = LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
+LocalBootstrapEffectivePolicyValidator.Validate(builder.Configuration, localBootstrapGuardResult);
 
 var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddBackOffice()
     .AddWebsite()
     .AddDeliveryApi()
     .AddComposers();
+LocalBootstrapTelemetryGuard.RemoveTelemetryJob(builder.Services, localBootstrapGuardResult);
 
 if (!string.IsNullOrEmpty(builder.Configuration["Umbraco:Storage:Cdn:Url"]))
 {
