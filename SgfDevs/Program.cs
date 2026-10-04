@@ -61,7 +61,7 @@ builder.Services.AddOpenApi("sgf-public-v1", options =>
         {
             Title = "SGF public API",
             Version = "1.0",
-            Description = "Typed public endpoints for SGF directory clients."
+            Description = "Typed public endpoints for SGF frontend clients."
         };
         return Task.CompletedTask;
     });
@@ -75,7 +75,8 @@ builder.Services.AddOpenApi("sgf-public-v1", options =>
         return actionDescriptor.AttributeRouteInfo?.Name is
             "Directory_GetSkillNames" or
             "Directory_GetSkillFilters" or
-            "Directory_Search";
+            "Directory_Search" or
+            "PublicHome_Get";
     };
 });
 builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
@@ -89,6 +90,11 @@ builder.Services.AddScoped<MemberConverter>();
 builder.Services.AddScoped<MemberTagDisplayService>();
 builder.Services.AddScoped<PresentationPresenterDisplayService>();
 builder.Services.AddScoped(_ => new EventDisplayService(EventSyncTimeZoneResolver.Resolve(builder.Configuration["SGFDevs:EventTimeZoneId"])));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<IPublicContentProtectionLookup, PublicContentProtectionLookup>();
+builder.Services.AddScoped<PublicContentAccessGuard>();
+builder.Services.AddScoped<PublicHomeBuilder>();
+builder.Services.AddScoped<PublicHomeService>();
 builder.Services.AddScoped<DirectoryHelper>();
 builder.Services.AddScoped<NewsletterHelper>();
 builder.Services.AddScoped<EventSyncImportFilter>();
