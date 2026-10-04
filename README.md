@@ -49,6 +49,70 @@ Media persists across restarts; `docker compose down --volumes` deletes it.
 - Under the "Everything" card click the green "Import" button
 - Once this is finished navigate to the site's root url and you should see a functioning site
 
+## Public Content Delivery API
+
+This project uses Umbraco CMS 18.2.0. The Delivery API exposes only published,
+unprotected nodes with these document type aliases: `home`, `events`, `event`,
+`companies`, `groups`, and `jobs`. These are public listing pages and event dates,
+not the member directory or full event presentations. The existing Razor pages
+continue to render unchanged.
+
+The non-empty `Umbraco:CMS:DeliveryApi:AllowedContentTypeAliases` list excludes
+every other type, including future document types. Do not empty it. Umbraco's
+allowlist takes precedence over its denylist. Generic `page` nodes stay excluded
+because that type also covers Member and Search Results pages. Company, group,
+job, presentation, leadership, account, authentication, tag, and element types
+stay excluded pending a property and reference review. The allowed types have no
+member pickers, block lists, media pickers, content references, or compositions.
+
+Media API access and both Delivery API member authorization flows are explicitly
+disabled. Umbraco excludes protected content when member authorization is disabled.
+The Delivery API key is empty, so preview requests cannot authorize access to
+draft content. Do not supply `Umbraco__CMS__DeliveryApi__ApiKey` or enable member
+authorization for this public-only API. Client-side `fields` filtering is not an
+access control.
+
+OpenAPI uses Umbraco 18's built-in document and UI routes:
+
+- Delivery API JSON: `/umbraco/openapi/delivery.json`
+- Swagger UI: `/umbraco/openapi`
+- Content endpoints: `/umbraco/delivery/api/v2/content` and
+  `/umbraco/delivery/api/v2/content/item/{id-or-path}`
+
+OpenAPI remains unavailable in Production by Umbraco's default. In local
+Development, use the origin printed by `dotnet run` with the paths above.
+Content-type schema generation stays disabled to avoid publishing private model
+properties or unrelated media schemas. No production OpenAPI override is added.
+
+After enabling the API or changing its allowlist, an operator must rebuild
+`DeliveryApiContentIndex` in Examine Management before relying on collection
+queries. This change does not rebuild an index, install a database, or import
+content. Review the actual database's properties and access protection before
+enabling these settings in a running environment. Repository schema checks do
+not establish what a live database contains.
+
+Official Umbraco 18 references:
+
+- [Content Delivery API](https://docs.umbraco.com/umbraco-cms/18.latest/develop-with-umbraco/headless-and-apis/content-delivery-api)
+- [Protected content](https://docs.umbraco.com/umbraco-cms/18.latest/develop-with-umbraco/headless-and-apis/content-delivery-api/protected-content-in-the-delivery-api)
+- [Content-type OpenAPI schemas](https://docs.umbraco.com/umbraco-cms/18.latest/develop-with-umbraco/headless-and-apis/content-delivery-api/content-type-schemas-in-openapi)
+- [OpenAPI routes and availability](https://docs.umbraco.com/umbraco-cms/18.latest/extend-your-project/server-side-extensions/api-versioning-and-openapi)
+
+## uSync Publisher credentials
+
+Incoming Publisher requests are disabled by default. Tracked configuration must
+not contain Publisher credentials. If incoming publishing is needed, supply these
+environment variables through external secret storage:
+
+- `uSync__Publisher__Settings__AppId`
+- `uSync__Publisher__Settings__AppKey`
+- `uSync__Publisher__Settings__IncomingEnabled`, enabled only after access review
+
+Previously committed credentials must be treated as compromised. An operator
+must rotate them externally and update any authorized publishing peers. Removing
+values from the current file does not remove them from Git history or revoke
+credentials in running environments.
+
 ## Building CSS
 - Navigate to the SgfDevs project folder `cd SgfDevs`
 - `npm install`
