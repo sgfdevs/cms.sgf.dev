@@ -98,8 +98,7 @@ public class DevsApiController : Controller
     }
 
     [HttpGet("api/directory/search", Name = "Directory_Search")]
-    [Produces("application/json")]
-    [ProducesResponseType<IReadOnlyList<PublicDirectoryMemberDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<IReadOnlyList<PublicDirectoryMemberDto>>(StatusCodes.Status200OK, "application/json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
     public ActionResult<IReadOnlyList<PublicDirectoryMemberDto>> GetSearch(
         [FromQuery] string skills,

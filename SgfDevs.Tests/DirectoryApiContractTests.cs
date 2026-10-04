@@ -1,6 +1,9 @@
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ApiExplorer;
+using Microsoft.AspNetCore.Mvc.Formatters;
 using SGFDevs.Controllers;
 using SGFDevs.ViewModels;
 using Xunit;
@@ -126,6 +129,27 @@ public class DirectoryApiContractTests
         Assert.Equal(routeTemplate, route.Template);
         Assert.Equal(operationName, route.Name);
         Assert.Equal(responseType, okResponse.Type);
+    }
+
+    [Fact]
+    public void DirectorySearchEndpoint_DocumentsProblemDetailsWithoutJsonFallback()
+    {
+        var method = typeof(DevsApiController).GetMethod(nameof(DevsApiController.GetSearch))!;
+        var responses = method.GetCustomAttributes<ProducesResponseTypeAttribute>()
+            .ToDictionary(attribute => attribute.StatusCode);
+
+        Assert.DoesNotContain(method.GetCustomAttributes<ProducesAttribute>(), attribute =>
+            attribute.ContentTypes.Contains("application/json"));
+        Assert.Equal(["application/json"], GetContentTypes(responses[StatusCodes.Status200OK]));
+        Assert.Equal(typeof(ProblemDetails), responses[StatusCodes.Status400BadRequest].Type);
+        Assert.Equal(["application/problem+json"], GetContentTypes(responses[StatusCodes.Status400BadRequest]));
+    }
+
+    private static string[] GetContentTypes(ProducesResponseTypeAttribute attribute)
+    {
+        var contentTypes = new MediaTypeCollection();
+        ((IApiResponseMetadataProvider)attribute).SetContentTypes(contentTypes);
+        return contentTypes.ToArray();
     }
 
     [Fact]
