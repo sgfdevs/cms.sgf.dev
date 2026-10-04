@@ -1,4 +1,4 @@
-# Springfield Devs Website
+# Springfield Devs CMS
 
 ![](https://pbs.twimg.com/profile_banners/2869149607/1567717351/1500x500)
 
@@ -6,11 +6,11 @@
 - [.NET SDK 10.x](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
 - [Node.js 18.x](https://nodejs.org/en/download/)
 
-## Local Installation Instructions
+## Local installation
 
 There are a couple of ways to run this project depending on if you have a .NET IDE installed or just the CLI tools
 
-### Environment Specific Steps
+### Local media
 
 Local media uses SeaweedFS. With Docker Compose installed, run from the repo root:
 
@@ -65,6 +65,10 @@ Do not use these overrides with `scripts/bootstrap-local-cms.py` or sealed
 install-only profiles. Sealed bootstrap forbids SMTP; its guards stay unchanged.
 This capture setup is local-only, not a deployment or Production configuration.
 
+The bounded native auth/reset proof used cached Mailpit v1.29.4, not the tracked
+v1.31.4 image. It verified native SMTP delivery and a real password reset. Runtime
+compatibility with v1.31.4 was not established by that proof.
+
 ### Disposable local bootstrap
 
 For a fresh local install that does not use user secrets or the old launch profile, run this from the repo root:
@@ -79,9 +83,9 @@ The script writes a private gitignored file at `SgfDevs/umbraco/Data/local-boots
 
 The disposable database path is `SgfDevs/umbraco/Data/local-bootstrap/local-bootstrap.sqlite`. The script never deletes or wipes databases. If that database already exists without the private bootstrap config that proves script ownership, it fails closed. Reruns reuse the same private config and database only after checking that the config still targets the loopback SeaweedFS endpoint and the local SQLite database.
 
-This install layer does not import schema or content. Its guarded local uSync settings keep `ImportOnFirstBoot=false`, `ImportAtStartup=None`, `ExportAtStartup=None`, and `ExportOnSave=None`. The tracked real `uSync/v18/Content` and `uSync/v18/Media` folders are not imported by this command. A later reviewed layer will add schema-only `Settings` import, and fictional seed data is still pending. Do not expect visual site parity from this bootstrap alone.
+This install layer does not import schema or content. Its guarded local uSync settings keep `ImportOnFirstBoot=false`, `ImportAtStartup=None`, `ExportAtStartup=None`, and `ExportOnSave=None`. The tracked real `uSync/v18/Content` and `uSync/v18/Media` folders are not imported by this command. Imports remain paused. Do not activate schema import or import real content/media. Fictional SGF seed data and the required legacy properties are still missing from the builtin-only runtime. Do not expect visual site parity from this bootstrap alone.
 
-For the split frontend workflow, run the CMS locally first and point the frontend server at it with a future `CMS_INTERNAL_ORIGIN`, for example `http://127.0.0.1:5099`. OpenAPI client generation should be run explicitly against a local CMS origin and committed as generated types in the frontend repo. This backend bootstrap does not enable production OpenAPI schemas or fetch production data.
+The split frontend already uses `CMS_INTERNAL_ORIGIN`. Use an ordinary Development runtime for frontend integration, not the sealed install-only profile. See the server-only settings below and the frontend README for the separate Kit commands. This bootstrap does not enable production OpenAPI schemas or fetch production data.
 
 - Create an `Umbraco.sqlite.db` file in the `./SgfDevs/umbraco/Data` directory 
   - Mac OS/Linux `mkdir -p ./SgfDevs/umbraco/Data && touch ./SgfDevs/umbraco/Data/Umbraco.sqlite.db`
@@ -102,15 +106,54 @@ For the split frontend workflow, run the CMS locally first and point the fronten
   - You can also fall back to the CLI tools instructions
 - Your IDE will likely have some kind of run option, run this and it should launch your browser
 
-### Umbraco In-browser Steps
-- Once the site has been launched you should see an Umbraco screen to create a new account
-- Fill this out and wait a few seconds for Umbraco to install
-- Once you're redirected to the Admin, click on the Settings tab
-- Navigation to "uSync" under "Synchronization" in the left panel
-- Under the "Everything" card click the green "Import" button
-- Once this is finished navigate to the site's root url and you should see a functioning site
+### Historical installation limits
 
-## Public Content Delivery API
+The old backoffice "Everything" import instructions are retired. Imports remain
+paused. A fresh native Umbraco install is not a functioning SGF site and does not
+supply SGF member properties, document types or content. Do not import or activate
+schema, content or media based on this README.
+
+## Split frontend and native member bridge
+
+The SvelteKit frontend in `sgf.dev` already has SSR/API and membership integration.
+Use two ordinary local Development processes. In the CMS shell, supply the
+existing private settings for an owned installation and these matching values:
+
+- `SGFDevs__MemberBridge__Secret` is a private shared secret. It must match
+  frontend `CMS_MEMBER_BRIDGE_SECRET`. Missing or mismatched secrets fail closed.
+- `SGFDevs__MemberBridge__FrontendOrigin=http://127.0.0.1:3000` selects the Kit
+  origin for reset links. It is not a CORS allowlist.
+- `Umbraco__CMS__DeliveryApi__ApiKey` is a private native Delivery key. Supply the
+  same value to frontend `CMS_DELIVERY_API_KEY`; content-page loads require it
+  even while native `PublicAccess=true`. Do not put it in browser code or Git.
+
+For that existing installation, the ordinary CMS command is:
+
+```sh
+ASPNETCORE_ENVIRONMENT=Development DOTNET_ENVIRONMENT=Development \
+  dotnet run --project SgfDevs --no-launch-profile --urls http://127.0.0.1:5099
+```
+
+Run Kit separately using the frontend README. Set frontend `CMS_INTERNAL_ORIGIN`
+to `http://127.0.0.1:5099`, plus its matching private keys. Vite loads ignored `.env`
+files; the built Node frontend needs process-environment injection. Set
+`BODY_SIZE_LIMIT=9M` on that Node server for the existing avatar upload path.
+These settings do not change sealed-bootstrap guards or tracked security defaults.
+
+`/api/v1/member/*` is intentionally server-only. Kit relays the native member
+cookie and sends `X-SGF-Member-Bridge` from its server. The bridge rejects requests
+with an `Origin` header. Native CORS middleware handles `[DisableCors]` endpoint
+metadata; it does not authorize browser CMS access. Do not add browser CMS calls,
+a permissive CORS policy or a frontend-origin allowlist as a workaround.
+
+A bounded native-CMS journey passed real login, session, logout, SMTP delivery and
+password reset. It used a synthetic member created through the native member
+manager in a builtin-member-only database. That runtime lacks the legacy SGF
+properties needed for registration, profile editing and avatars. Those operations
+are not working end-to-end there; a successful reset does not prove them. Imports
+remain paused, and no schema, database or media activation is part of this layer.
+
+## Public content Delivery API
 
 This project uses Umbraco CMS 18.2.0. The Delivery API exposes only published,
 unprotected nodes with these document type aliases: `home`, `events`, `event`,
@@ -129,10 +172,14 @@ Page blocks and meta remain allowed as in the content-pages layer.
 
 Media API access and both Delivery API member authorization flows are explicitly
 disabled. Umbraco excludes protected content when member authorization is disabled.
-The Delivery API key is empty, so preview requests cannot authorize access to
-draft content. Do not supply `Umbraco__CMS__DeliveryApi__ApiKey` or enable member
-authorization for this public-only API. Client-side `fields` filtering is not an
-access control.
+The tracked Delivery API key is empty, so the default configuration cannot
+authorize draft previews. For frontend integration, privately configure the native
+`Umbraco__CMS__DeliveryApi__ApiKey` and matching frontend `CMS_DELIVERY_API_KEY`
+as described above. Public access stays enabled; this key is still required by
+the frontend's server clients. A native key can authorize draft previews, so keep
+it server-only and do not expose preview access to browsers. Do not enable member
+authorization or change the allowlist for this setup. Client-side `fields`
+filtering is not an access control.
 
 OpenAPI uses Umbraco 18's built-in document and UI routes:
 
@@ -178,7 +225,7 @@ must rotate them externally and update any authorized publishing peers. Removing
 values from the current file does not remove them from Git history or revoke
 credentials in running environments.
 
-## Building CSS
+## Building legacy CSS
 - Navigate to the SgfDevs project folder `cd SgfDevs`
 - `npm install`
 - `npm run build` or to watch for changes `npm run css`
