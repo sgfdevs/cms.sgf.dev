@@ -16,6 +16,7 @@ using SgfDevs.Dev;
 using SgfDevs.Dev.EventSync;
 using SgfDevs.Dev.EventSync.Meetup;
 using SgfDevs.Dev.EventSync.Sessionize;
+using SgfDevs.Dev.LocalBootstrap;
 using SgfDevs.HealthChecks;
 using SGFDevs.Dev;
 using Umbraco.Cms.Core.DependencyInjection;
@@ -28,6 +29,8 @@ using Umbraco.Extensions;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.UseSentry();
+
+LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
 
 var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddBackOffice()
