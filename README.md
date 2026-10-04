@@ -22,6 +22,49 @@ The local bucket is created automatically at `http://localhost:8333`.
 The development launch profiles supply local-only credentials.
 Media persists across restarts; `docker compose down --volumes` deletes it.
 
+### Optional local email capture
+
+[Mailpit](https://mailpit.axllent.org/docs/install/docker/) uses the official
+`axllent/mailpit:v1.31.4` stable image, behind the optional `mailpit` Compose profile.
+SMTP and the inbox UI bind only to `127.0.0.1:1025` and `127.0.0.1:8025`.
+No relay, authentication, or persistent mail volume is configured. Use fictional
+local addresses only. Captured messages can contain private reset tokens.
+
+From the repo root, confirm that `desktop-linux` points to your local Unix socket,
+not a remote Docker host. This workstation uses
+`unix:///home/levi/.docker/desktop/docker.sock`. Stop if the context is not local.
+Then start only Mailpit, without starting or recreating SeaweedFS:
+
+```sh
+docker context inspect desktop-linux --format '{{.Endpoints.docker.Host}}'
+docker --context desktop-linux compose --profile mailpit up -d --no-deps mailpit
+```
+
+For the CMS running on the host in ordinary local Development, supply native
+Umbraco 18.2 SMTP settings in its launch shell. These are session-only overrides,
+not changes to tracked appsettings or shared credentials:
+
+```sh
+export ASPNETCORE_ENVIRONMENT=Development
+export DOTNET_ENVIRONMENT=Development
+export Umbraco__CMS__Global__Smtp__Host=127.0.0.1
+export Umbraco__CMS__Global__Smtp__Port=1025
+export Umbraco__CMS__Global__Smtp__From=noreply@sgf.dev.invalid
+export Umbraco__CMS__Global__Smtp__DeliveryMethod=Network
+export Umbraco__CMS__Global__Smtp__SecureSocketOptions=None
+export Umbraco__CMS__Global__Smtp__Username=
+export Umbraco__CMS__Global__Smtp__Password=
+export SGFDevs__MemberBridge__FrontendOrigin=http://127.0.0.1:3000
+```
+
+Replace port `3000` with your local frontend port. The existing
+`SGFDevs:MemberBridge:FrontendOrigin` selects the `/reset-password` link origin,
+not the CMS host. Launch the CMS using your existing ordinary Development setup;
+open the inbox at `http://127.0.0.1:8025`. `SecureSocketOptions=None` means no TLS.
+Do not use these overrides with `scripts/bootstrap-local-cms.py` or sealed
+install-only profiles. Sealed bootstrap forbids SMTP; its guards stay unchanged.
+This capture setup is local-only, not a deployment or Production configuration.
+
 ### Disposable local bootstrap
 
 For a fresh local install that does not use user secrets or the old launch profile, run this from the repo root:
