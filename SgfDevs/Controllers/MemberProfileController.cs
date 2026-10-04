@@ -47,7 +47,7 @@ public sealed class MemberProfileController(
             var member = members.GetById(user.Key);
             var options = choices.Get();
             if (member is null || !HasSchema(member) || options is null) return StatusCode(503);
-            var image = manager.AsPublishedMember(user)?.Value<MediaWithCrops>("profileImage")?.GetCropUrl(width: 200, height: 200);
+            var image = manager.AsPublishedMember(user)?.Value<MediaWithCrops>("profileImage")?.GetCropUrl(width: 200);
             return Ok(new MemberProfileEditDto(Read(member), PublicHomeBuilder.GetSafePathOrHttpUrl(image),
                 options.Value.Skills, options.Value.Groups));
         }
