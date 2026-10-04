@@ -28,15 +28,18 @@ using Umbraco.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.WebHost.UseSentry();
+var localBootstrapConfigLoaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
+var localBootstrapGuardResult = LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
+LocalBootstrapEffectivePolicyValidator.Validate(builder.Configuration, localBootstrapGuardResult, localBootstrapConfigLoaded);
 
-LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
+builder.WebHost.UseSentry();
 
 var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddBackOffice()
     .AddWebsite()
     .AddDeliveryApi()
     .AddComposers();
+LocalBootstrapTelemetryGuard.RemoveTelemetryJob(builder.Services, localBootstrapGuardResult);
 
 if (!string.IsNullOrEmpty(builder.Configuration["Umbraco:Storage:Cdn:Url"]))
 {

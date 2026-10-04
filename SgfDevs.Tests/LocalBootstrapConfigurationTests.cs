@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using SgfDevs.Dev.LocalBootstrap;
 using Xunit;
 
@@ -45,19 +47,81 @@ public sealed class LocalBootstrapConfigurationTests
     }
 
     [Fact]
+    public void LocalBootstrapLoader_IgnoresExplicitConfigOutsideDevelopment()
+    {
+        using var temp = TempAppRoot.Create();
+        var configPath = temp.CreateLocalConfig();
+        var configuration = new ConfigurationManager();
+        configuration[LocalBootstrapConfigurationLoader.ConfigPathEnvironmentVariable] = configPath;
+
+        var loaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(
+            configuration,
+            new TestHostEnvironment(Environments.Production, Path.Combine(temp.Path, "SgfDevs")));
+
+        Assert.False(loaded);
+        Assert.Null(configuration.GetConnectionString("umbracoDbDSN"));
+    }
+
+    [Fact]
+    public void LocalBootstrapLoader_LoadsDevelopmentConfigOnlyFromGuardedDirectory()
+    {
+        using var temp = TempAppRoot.Create();
+        var configPath = temp.CreateLocalConfig();
+        var configuration = new ConfigurationManager();
+        configuration[LocalBootstrapConfigurationLoader.ConfigPathEnvironmentVariable] = configPath;
+
+        var loaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(
+            configuration,
+            new TestHostEnvironment(Environments.Development, Path.Combine(temp.Path, "SgfDevs")));
+
+        Assert.True(loaded);
+        Assert.True(configuration.GetValue<bool>("SGFDevs:LocalBootstrap:Enabled"));
+        Assert.Equal("Data Source=test", configuration.GetConnectionString("umbracoDbDSN"));
+    }
+
+    [Fact]
+    public void LocalBootstrapLoader_RejectsConfigOutsideBootstrapDirectory()
+    {
+        using var temp = TempAppRoot.Create();
+        var appRoot = Path.Combine(temp.Path, "SgfDevs");
+        Directory.CreateDirectory(appRoot);
+        var outsidePath = Path.Combine(temp.Path, "local-bootstrap.appsettings.json");
+        File.WriteAllText(outsidePath, "{}");
+        var configuration = new ConfigurationManager();
+        configuration[LocalBootstrapConfigurationLoader.ConfigPathEnvironmentVariable] = outsidePath;
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() =>
+            LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(
+                configuration,
+                new TestHostEnvironment(Environments.Development, appRoot)));
+
+        Assert.Contains("must point under", exception.Message);
+    }
+
+    [Fact]
     public void Program_ValidatesLocalBootstrapBeforeUmbracoCanBuildOrBoot()
     {
         var program = File.ReadAllText(Path.Combine(ProjectDirectory, "Program.cs"));
 
+        var loaderIndex = program.IndexOf("LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration", StringComparison.Ordinal);
         var guardIndex = program.IndexOf("LocalBootstrapGuard.ValidateStartupConfiguration", StringComparison.Ordinal);
         var createBuilderIndex = program.IndexOf("builder.CreateUmbracoBuilder()", StringComparison.Ordinal);
+        var effectivePolicyIndex = program.IndexOf("LocalBootstrapEffectivePolicyValidator.Validate", StringComparison.Ordinal);
+        var sentryIndex = program.IndexOf("builder.WebHost.UseSentry()", StringComparison.Ordinal);
+        var telemetryGuardIndex = program.IndexOf("LocalBootstrapTelemetryGuard.RemoveTelemetryJob", StringComparison.Ordinal);
         var buildIndex = program.IndexOf("umbracoBuilder.Build()", StringComparison.Ordinal);
         var bootIndex = program.IndexOf("app.BootUmbracoAsync()", StringComparison.Ordinal);
 
+        Assert.True(loaderIndex >= 0, "Program.cs must load explicit local bootstrap config before the guard.");
         Assert.True(guardIndex >= 0, "Program.cs must call the local bootstrap guard.");
-        Assert.True(guardIndex < createBuilderIndex, "The local bootstrap guard must run before CreateUmbracoBuilder.");
-        Assert.True(guardIndex < buildIndex, "The local bootstrap guard must run before UmbracoBuilder.Build.");
-        Assert.True(guardIndex < bootIndex, "The local bootstrap guard must run before BootUmbracoAsync.");
+        Assert.True(loaderIndex < guardIndex, "The local bootstrap config loader must run before the DB guard.");
+        Assert.True(guardIndex < effectivePolicyIndex, "The DB guard must run before complete effective-policy validation.");
+        Assert.True(effectivePolicyIndex < sentryIndex, "Complete effective-policy validation must run before Sentry registration.");
+        Assert.True(effectivePolicyIndex < createBuilderIndex, "Complete effective-policy validation must run before CreateUmbracoBuilder.");
+        Assert.True(telemetryGuardIndex > createBuilderIndex, "The local telemetry guard must run after Umbraco registers background jobs.");
+        Assert.True(telemetryGuardIndex < buildIndex, "The local telemetry guard must run before UmbracoBuilder.Build.");
+        Assert.True(effectivePolicyIndex < buildIndex, "Complete effective-policy validation must run before UmbracoBuilder.Build.");
+        Assert.True(effectivePolicyIndex < bootIndex, "Complete effective-policy validation must run before BootUmbracoAsync.");
     }
 
     private static IConfiguration LoadConfiguration(bool development)
@@ -127,6 +191,56 @@ public sealed class LocalBootstrapConfigurationTests
         }
 
         return false;
+    }
+
+    private sealed class TempAppRoot : IDisposable
+    {
+        private TempAppRoot(string path)
+        {
+            Path = path;
+        }
+
+        public string Path { get; }
+
+        public static TempAppRoot Create()
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sgf-local-bootstrap-loader-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(path);
+            return new TempAppRoot(path);
+        }
+
+        public string CreateLocalConfig()
+        {
+            var configDirectory = System.IO.Path.Combine(Path, "SgfDevs", "umbraco", "Data", "local-bootstrap");
+            Directory.CreateDirectory(configDirectory);
+            var configPath = System.IO.Path.Combine(configDirectory, LocalBootstrapConfigurationLoader.ConfigFileName);
+            File.WriteAllText(configPath, """
+            {
+              "SGFDevs": { "LocalBootstrap": { "Enabled": true } },
+              "ConnectionStrings": { "umbracoDbDSN": "Data Source=test" }
+            }
+            """);
+            return configPath;
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+    }
+
+    private sealed class TestHostEnvironment(string environmentName, string contentRootPath) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "SgfDevs.Tests";
+
+        public string ContentRootPath { get; set; } = contentRootPath;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
     private static string ProjectDirectory
