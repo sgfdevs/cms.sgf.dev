@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SGFDevs.Dev;
 using Examine;
@@ -69,69 +70,82 @@ public class DevsApiController : Controller
         _memberTagDisplayService = memberTagDisplayService;
     }
 
-    // GET
-    [Route("api/tags/skills")]
-    public IEnumerable<string> GetAllSkills()
+    [HttpGet("api/tags/skills", Name = "Directory_GetSkillNames")]
+    [Produces("application/json")]
+    [ProducesResponseType<IReadOnlyList<string>>(StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyList<string>> GetAllSkills()
     {
-        var skills = _directoryHelper.GetSkills().ToList();
-        return skills.Select(x => string.IsNullOrEmpty(x.DisplayName) ? x.Name : x.DisplayName);
+        var skills = _directoryHelper.GetSkills() ?? [];
+        return Ok(skills.Select(GetTagDisplayName).ToList());
     }
 
-    [Route("api/directory/filters/skills")]
-    public IActionResult GetSkillsFilters()
+    [HttpGet("api/directory/filters/skills", Name = "Directory_GetSkillFilters")]
+    [Produces("application/json")]
+    [ProducesResponseType<IReadOnlyList<PublicSkillFilterDto>>(StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyList<PublicSkillFilterDto>> GetSkillsFilters()
     {
-        var _skills = _directoryHelper.GetSkills().ToList();
-
-        var skills = from x in _skills
-            select new
+        var skills = (_directoryHelper.GetSkills() ?? [])
+            .Select(x => new PublicSkillFilterDto
             {
-                name = string.IsNullOrEmpty(x.DisplayName) ? x.Name : x.DisplayName,
-                id = x.Id,
-                key = x.Key,
-                isActive = false
-            };
+                Name = GetTagDisplayName(x),
+                Id = x.Id,
+                Key = x.Key,
+                IsActive = false
+            })
+            .ToList();
 
-        return Ok(skills.ToList());
+        return Ok(skills);
     }
 
-    [Route("api/directory/search")]
-    public IActionResult GetSearch()
+    [HttpGet("api/directory/search", Name = "Directory_Search")]
+    [ProducesResponseType<IReadOnlyList<PublicDirectoryMemberDto>>(StatusCodes.Status200OK, "application/json")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
+    public ActionResult<IReadOnlyList<PublicDirectoryMemberDto>> GetSearch(
+        [FromQuery] string skills,
+        [FromQuery] int? skip,
+        [FromQuery] int? take)
     {
-        var memberResults = new List<DirectoryResult>();
-
-        // This is pretty much one massive brainstorm cluster eff at this point. Psh.
-        if (_examineManager.TryGetIndex(Constants.UmbracoIndexes.MembersIndexName, out var index))
+        if (!DirectorySearchQuery.TryCreate(skills, skip, take, out var searchQuery, out var error))
         {
-            var searcher = index.Searcher;
-            var skillsQs = HttpContext.Request.Query["skills"].ToString();
-            // Send back all the members if no params are set
-            if (string.IsNullOrEmpty(skillsQs))
+            return BadRequest(new ProblemDetails
             {
-                var allMembers = _directoryHelper.GetAllMembers()
-                    .Select(BuildDirectoryResult);
-
-                return Ok(allMembers);
-            }
-
-            // Otherwise hit Lucene/Examine
-            var skillsParam = skillsQs.Split(',');
-            var criteria = searcher.CreateQuery("member");
-            var query = criteria.GroupedOr(["nodeName", "skillKeys", "skillsTags", "skills", "skillIds"], skillsParam);
-            var results = query.Execute();
-
-            if (results.Any())
-            {
-                var ids = results.Select(result => int.Parse(result.Id)).ToArray();
-
-                var filteredMembers = _memberService.GetAllMembers(ids)
-                    .Select(BuildDirectoryResult)
-                    .OrderBy(m => m.Name);
-
-                return Ok(filteredMembers);
-            }
+                Title = "Invalid directory search query.",
+                Detail = error,
+                Status = StatusCodes.Status400BadRequest
+            });
         }
 
-        return Ok(memberResults);
+        if (searchQuery.SkillTerms.Count == 0)
+        {
+            var allMembers = searchQuery.ApplyTo(_directoryHelper.GetAllMembers()
+                    .Select(BuildDirectoryResult))
+                .ToList();
+
+            return Ok(allMembers);
+        }
+
+        if (!_examineManager.TryGetIndex(Constants.UmbracoIndexes.MembersIndexName, out var index))
+        {
+            return Ok(new List<PublicDirectoryMemberDto>());
+        }
+
+        var searcher = index.Searcher;
+        var criteria = searcher.CreateQuery("member");
+        var query = criteria.GroupedOr(["nodeName", "skillKeys", "skillsTags", "skills", "skillIds"], searchQuery.SkillTerms.ToArray());
+        var results = query.Execute();
+
+        if (!results.Any())
+        {
+            return Ok(new List<PublicDirectoryMemberDto>());
+        }
+
+        var ids = results.Select(result => int.Parse(result.Id)).ToArray();
+        var filteredMembers = searchQuery.ApplyTo(_memberService.GetAllMembers(ids)
+                .Select(BuildDirectoryResult)
+                .OrderBy(m => m.Name))
+            .ToList();
+
+        return Ok(filteredMembers);
     }
 
     [Route("api/profile/image-process")]
@@ -197,7 +211,7 @@ public class DevsApiController : Controller
         return Ok();
     }
 
-    private DirectoryResult BuildDirectoryResult(IMember umbracoMember)
+    private PublicDirectoryMemberDto BuildDirectoryResult(IMember umbracoMember)
     {
         var member = _memberConverter.FromMember(umbracoMember);
         var url = "/member/" + member.Username;
@@ -209,7 +223,7 @@ public class DevsApiController : Controller
             image = member.ProfileImage.GetCropUrl(width: 500);
         }
 
-        return new DirectoryResult
+        return new PublicDirectoryMemberDto
         {
             Name = member.Name,
             Location = location,
@@ -218,4 +232,7 @@ public class DevsApiController : Controller
             Tags = _memberTagDisplayService.GetDisplayMemberTags(member)
         };
     }
+
+    private static string GetTagDisplayName(Tag tag) =>
+        string.IsNullOrEmpty(tag.DisplayName) ? tag.Name : tag.DisplayName;
 }
