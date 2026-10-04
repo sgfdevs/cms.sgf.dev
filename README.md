@@ -15,12 +15,30 @@ There are a couple of ways to run this project depending on if you have a .NET I
 Local media uses SeaweedFS. With Docker Compose installed, run from the repo root:
 
 ```sh
-docker compose up -d
+docker compose up -d seaweedfs
 ```
 
 The local bucket is created automatically at `http://localhost:8333`.
 The development launch profiles supply local-only credentials.
 Media persists across restarts; `docker compose down --volumes` deletes it.
+
+### Disposable local bootstrap
+
+For a fresh local install that does not use user secrets or the old launch profile, run this from the repo root:
+
+```sh
+python3 scripts/bootstrap-local-cms.py
+```
+
+The script defaults the CMS to `http://127.0.0.1:5099` when no environment is set. If `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` is set to anything other than `Development`, it refuses to run. It starts only the `seaweedfs` compose service with `docker compose up -d seaweedfs`, then runs the CMS in the foreground with `dotnet run --no-launch-profile`. Stop the CMS with Ctrl+C.
+
+The script writes a private gitignored file at `SgfDevs/umbraco/Data/local-bootstrap/local-bootstrap.appsettings.json`. That file contains the generated local Umbraco admin password and local imaging HMAC secret. The script prints the path, not the values. File permissions are locked to the current user. Do not copy this file into commits, images, chat logs, or shared secret stores.
+
+The disposable database path is `SgfDevs/umbraco/Data/local-bootstrap/local-bootstrap.sqlite`. The script never deletes or wipes databases. If that database already exists without the private bootstrap config that proves script ownership, it fails closed. Reruns reuse the same private config and database only after checking that the config still targets the loopback SeaweedFS endpoint and the local SQLite database.
+
+This install layer does not import schema or content. Its guarded local uSync settings keep `ImportOnFirstBoot=false`, `ImportAtStartup=None`, `ExportAtStartup=None`, and `ExportOnSave=None`. The tracked real `uSync/v18/Content` and `uSync/v18/Media` folders are not imported by this command. A later reviewed layer will add schema-only `Settings` import, and fictional seed data is still pending. Do not expect visual site parity from this bootstrap alone.
+
+For the split frontend workflow, run the CMS locally first and point the frontend server at it with a future `CMS_INTERNAL_ORIGIN`, for example `http://127.0.0.1:5099`. OpenAPI client generation should be run explicitly against a local CMS origin and committed as generated types in the frontend repo. This backend bootstrap does not enable production OpenAPI schemas or fetch production data.
 
 - Create an `Umbraco.sqlite.db` file in the `./SgfDevs/umbraco/Data` directory 
   - Mac OS/Linux `mkdir -p ./SgfDevs/umbraco/Data && touch ./SgfDevs/umbraco/Data/Umbraco.sqlite.db`

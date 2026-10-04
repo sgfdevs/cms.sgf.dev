@@ -30,6 +30,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.UseSentry();
 
+LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
 LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
 
 var umbracoBuilder = builder.CreateUmbracoBuilder()
