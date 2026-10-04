@@ -23,7 +23,7 @@ public class PublicMemberController : ControllerBase
     [HttpGet("api/v1/public/members/{username}", Name = "PublicMember_Get")]
     [ProducesResponseType<PublicMemberProfileDto>(StatusCodes.Status200OK, "application/json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, "application/problem+json")]
-    public async Task<ActionResult<PublicMemberProfileDto>> Get(string username)
+    public async Task<ActionResult<PublicMemberProfileDto>> Get(string? username)
     {
         var member = await _publicMemberService.GetAsync(username);
         return member is null

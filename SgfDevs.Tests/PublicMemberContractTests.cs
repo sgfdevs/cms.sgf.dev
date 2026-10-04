@@ -1,11 +1,23 @@
 #nullable enable
 
+using System.Globalization;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
 using Microsoft.AspNetCore.Mvc.Formatters;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using SGFDevs.Controllers;
 using SGFDevs.ViewModels;
 using SgfDevs.Dev;
@@ -80,8 +92,47 @@ public class PublicMemberContractTests
     public async Task Get_InvalidUsernameReturns404WithoutLookingUpMember(string? username)
     {
         var fixture = new Fixture();
-        var result = await new PublicMemberController(fixture.Service).Get(username!);
+        var result = await new PublicMemberController(fixture.Service).Get(username);
         Assert404(result);
+        Assert.Null(fixture.LookedUpUsername);
+    }
+
+    [Fact]
+    public async Task Get_WhitespaceRouteBindingReaches404InsteadOfImplicitRequired400()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddMvcCore().AddDataAnnotations();
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<MvcOptions>>().Value;
+        Assert.False(options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes);
+        var metadataProvider = (ModelMetadataProvider)provider.GetRequiredService<IModelMetadataProvider>();
+        var parameter = typeof(PublicMemberController).GetMethod(nameof(PublicMemberController.Get))!.GetParameters()[0];
+        var metadata = metadataProvider.GetMetadataForParameter(parameter);
+        Assert.False(metadata.IsRequired);
+
+        var action = new ActionContext(new DefaultHttpContext(), new RouteData(),
+            new ActionDescriptor(), new ModelStateDictionary());
+        action.HttpContext.RequestServices = provider;
+        var values = new RouteValueProvider(BindingSource.Path,
+            new RouteValueDictionary { ["username"] = " " }, CultureInfo.InvariantCulture);
+        var binding = DefaultModelBindingContext.CreateBindingContext(action, values, metadata, null, "username");
+        await new SimpleTypeModelBinder(typeof(string), provider.GetRequiredService<ILoggerFactory>()).BindModelAsync(binding);
+        Assert.True(binding.Result.IsModelSet);
+        Assert.Null(binding.Result.Model);
+
+        var validator = (ObjectModelValidator)provider.GetRequiredService<IObjectModelValidator>();
+        validator.Validate(action, null, "username", binding.Result.Model, metadata);
+
+        var fixture = new Fixture();
+        var controller = new PublicMemberController(fixture.Service);
+        var executing = new ActionExecutingContext(action, new List<IFilterMetadata>(),
+            new Dictionary<string, object?> { ["username"] = binding.Result.Model }, controller);
+        new ModelStateInvalidFilter(provider.GetRequiredService<IOptions<ApiBehaviorOptions>>().Value,
+            provider.GetRequiredService<ILoggerFactory>().CreateLogger("PublicMemberBinding")).OnActionExecuting(executing);
+        Assert.True(action.ModelState.IsValid);
+        Assert.Null(executing.Result);
+        Assert404(await controller.Get((string?)binding.Result.Model));
         Assert.Null(fixture.LookedUpUsername);
     }
 
