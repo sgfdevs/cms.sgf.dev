@@ -95,7 +95,7 @@ builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
 builder.Services.AddOpenApi("sgf-member-v1", options =>
 {
     options.ShouldInclude = description => description.ActionDescriptor is ControllerActionDescriptor action &&
-        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session";
+        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session" or "Member_Register";
     options.AddDocumentTransformer((document, _, _) =>
     {
         document.Info = new OpenApiInfo { Title = "SGF private member bridge", Version = "1.0" };
@@ -106,8 +106,9 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/login", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(context.Request.Method)
-            ? RateLimitPartition.GetFixedWindowLimiter("member-login", _ => new FixedWindowRateLimiterOptions
+        (string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/login", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/register", StringComparison.OrdinalIgnoreCase)) && HttpMethods.IsPost(context.Request.Method)
+            ? RateLimitPartition.GetFixedWindowLimiter(context.Request.Path.Value!.TrimEnd('/').ToLowerInvariant(), _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
             })
