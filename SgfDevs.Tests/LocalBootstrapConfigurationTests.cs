@@ -107,6 +107,7 @@ public sealed class LocalBootstrapConfigurationTests
         var guardIndex = program.IndexOf("LocalBootstrapGuard.ValidateStartupConfiguration", StringComparison.Ordinal);
         var createBuilderIndex = program.IndexOf("builder.CreateUmbracoBuilder()", StringComparison.Ordinal);
         var effectivePolicyIndex = program.IndexOf("LocalBootstrapEffectivePolicyValidator.Validate", StringComparison.Ordinal);
+        var sentryIndex = program.IndexOf("builder.WebHost.UseSentry()", StringComparison.Ordinal);
         var telemetryGuardIndex = program.IndexOf("LocalBootstrapTelemetryGuard.RemoveTelemetryJob", StringComparison.Ordinal);
         var buildIndex = program.IndexOf("umbracoBuilder.Build()", StringComparison.Ordinal);
         var bootIndex = program.IndexOf("app.BootUmbracoAsync()", StringComparison.Ordinal);
@@ -115,6 +116,7 @@ public sealed class LocalBootstrapConfigurationTests
         Assert.True(guardIndex >= 0, "Program.cs must call the local bootstrap guard.");
         Assert.True(loaderIndex < guardIndex, "The local bootstrap config loader must run before the DB guard.");
         Assert.True(guardIndex < effectivePolicyIndex, "The DB guard must run before complete effective-policy validation.");
+        Assert.True(effectivePolicyIndex < sentryIndex, "Complete effective-policy validation must run before Sentry registration.");
         Assert.True(effectivePolicyIndex < createBuilderIndex, "Complete effective-policy validation must run before CreateUmbracoBuilder.");
         Assert.True(telemetryGuardIndex > createBuilderIndex, "The local telemetry guard must run after Umbraco registers background jobs.");
         Assert.True(telemetryGuardIndex < buildIndex, "The local telemetry guard must run before UmbracoBuilder.Build.");

@@ -28,11 +28,11 @@ using Umbraco.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.WebHost.UseSentry();
-
 var localBootstrapConfigLoaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
 var localBootstrapGuardResult = LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
 LocalBootstrapEffectivePolicyValidator.Validate(builder.Configuration, localBootstrapGuardResult, localBootstrapConfigLoaded);
+
+builder.WebHost.UseSentry();
 
 var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddBackOffice()

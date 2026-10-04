@@ -99,6 +99,7 @@ public sealed class LocalBootstrapScriptTests
         Assert.Contains("COMPOSE_PROJECT_NAME=", dockerEnv);
         Assert.Contains("DOCKER_HOST=", dockerEnv);
         Assert.Contains("DOCKER_CONTEXT=", dockerEnv);
+        Assert.Contains("DOCKER_CONFIG=", dockerEnv);
         Assert.Contains("HTTP_PROXY=", dockerEnv);
     }
 
@@ -222,9 +223,13 @@ public sealed class LocalBootstrapScriptTests
     [Theory]
     [InlineData("DOCKER_HOST", "tcp://remote.example.invalid:2376")]
     [InlineData("DOCKER_CONTEXT", "remote-prod")]
+    [InlineData("DOCKER_CONFIG", "/tmp/evil-docker-config")]
     public async Task Script_RefusesInjectedRemoteDockerSelectionBeforeCreatingPrivateConfig(string key, string value)
     {
         using var temp = TempScriptWorkspace.Create();
+        Directory.CreateDirectory(temp.BootstrapDirectory);
+        File.SetUnixFileMode(temp.BootstrapDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        var originalMode = File.GetUnixFileMode(temp.BootstrapDirectory);
 
         var result = await temp.RunScriptAsync(new Dictionary<string, string>
         {
@@ -234,23 +239,71 @@ public sealed class LocalBootstrapScriptTests
 
         Assert.Equal(2, result.ExitCode);
         Assert.Contains("local Docker context", result.Stderr);
+        Assert.Equal(originalMode, File.GetUnixFileMode(temp.BootstrapDirectory));
         Assert.False(File.Exists(temp.ConfigPath));
         Assert.False(File.Exists(temp.DockerArgsPath));
         Assert.False(File.Exists(temp.DotnetArgsPath));
     }
 
-    [Fact]
-    public async Task Script_RefusesRemoteDefaultDockerContextBeforeCreatingPrivateConfig()
+    [Theory]
+    [InlineData("tcp://remote.example.invalid:2376")]
+    [InlineData("npipe:////remotehost/pipe/docker_engine")]
+    [InlineData("npipe:////server/share/docker_engine")]
+    [InlineData("npipe:////./pipe/docker_engine/extra")]
+    [InlineData("npipe:////localhost/pipe/docker_engine?x=1")]
+    [InlineData("npipe:////%2e/pipe/docker_engine")]
+    [InlineData("unix://remote/var/run/docker.sock")]
+    [InlineData("unix:////remote/var/run/docker.sock")]
+    [InlineData("unix:///var/run/docker.sock?x=1")]
+    [InlineData("unix:///var/run/docker.sock#fragment")]
+    [InlineData("unix:///var/run%2Fdocker.sock")]
+    [InlineData("unix:///tmp/docker.sock")]
+    public async Task Script_RefusesRemoteDefaultDockerContextBeforeCreatingPrivateConfig(string endpoint)
     {
         using var temp = TempScriptWorkspace.Create();
+        Directory.CreateDirectory(temp.BootstrapDirectory);
+        File.SetUnixFileMode(temp.BootstrapDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        var originalMode = File.GetUnixFileMode(temp.BootstrapDirectory);
 
-        var result = await temp.RunScriptAsync(new Dictionary<string, string> { ["FAKE_DOCKER_CONTEXT_ENDPOINT"] = "tcp://remote.example.invalid:2376" });
+        var result = await temp.RunScriptAsync(new Dictionary<string, string> { ["FAKE_DOCKER_CONTEXT_ENDPOINT"] = endpoint });
 
         Assert.Equal(2, result.ExitCode);
         Assert.Contains("not a local endpoint", result.Stderr);
+        Assert.Equal(originalMode, File.GetUnixFileMode(temp.BootstrapDirectory));
         Assert.False(File.Exists(temp.ConfigPath));
         Assert.False(File.Exists(temp.DockerArgsPath));
         Assert.False(File.Exists(temp.DotnetArgsPath));
+    }
+
+    [Theory]
+    [InlineData("unix:///var/run/docker.sock")]
+    [InlineData("unix:///run/user/1000/docker.sock")]
+    [InlineData("npipe:////./pipe/docker_engine")]
+    [InlineData("npipe:////localhost/pipe/docker_engine")]
+    public async Task Script_AcceptsExplicitLocalDockerContextEndpoints(string endpoint)
+    {
+        using var temp = TempScriptWorkspace.Create();
+
+        var result = await temp.RunScriptAsync(new Dictionary<string, string> { ["FAKE_DOCKER_CONTEXT_ENDPOINT"] = endpoint });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(temp.ConfigPath));
+        Assert.True(File.Exists(temp.DockerArgsPath));
+        Assert.True(File.Exists(temp.DotnetArgsPath));
+    }
+
+    [Fact]
+    public async Task Script_AcceptsHomeDockerDesktopUnixSocket()
+    {
+        using var temp = TempScriptWorkspace.Create();
+        var endpoint = "unix://" + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".docker", "desktop", "docker.sock");
+
+        var result = await temp.RunScriptAsync(new Dictionary<string, string> { ["FAKE_DOCKER_CONTEXT_ENDPOINT"] = endpoint });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(temp.ConfigPath));
+        Assert.True(File.Exists(temp.DockerArgsPath));
+        Assert.True(File.Exists(temp.DotnetArgsPath));
     }
 
     [Theory]
@@ -358,6 +411,7 @@ public sealed class LocalBootstrapScriptTests
             startInfo.Environment["FAKE_DOCKER_ENV"] = DockerEnvPath;
             startInfo.Environment.Remove("ASPNETCORE_ENVIRONMENT");
             startInfo.Environment.Remove("DOTNET_ENVIRONMENT");
+            startInfo.Environment.Remove("DOCKER_CONFIG");
             if (extraEnvironment is not null)
             {
                 foreach (var pair in extraEnvironment)
@@ -410,6 +464,7 @@ public sealed class LocalBootstrapScriptTests
               printf 'COMPOSE_PROJECT_NAME=%s\n' "$COMPOSE_PROJECT_NAME"
               printf 'DOCKER_HOST=%s\n' "$DOCKER_HOST"
               printf 'DOCKER_CONTEXT=%s\n' "$DOCKER_CONTEXT"
+              printf 'DOCKER_CONFIG=%s\n' "$DOCKER_CONFIG"
               printf 'HTTP_PROXY=%s\n' "$HTTP_PROXY"
             } > "$FAKE_DOCKER_ENV"
             exit 0

@@ -11,11 +11,13 @@ import hmac
 import json
 import os
 import secrets
+import re
 import shutil
 import stat
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 CONFIG_ENV_VAR = "SGFDEVS_LOCAL_BOOTSTRAP_CONFIG_PATH"
 DEFAULT_PORT = 5099
@@ -29,7 +31,7 @@ LOCAL_S3_SECRET_KEY = "sgf-dev-local-password"
 POLICY_VERSION = 1
 DOCKER_CONTEXT_NAME = "default"
 DOCKER_PROJECT_NAME = "sgf-dev-local"
-FORBIDDEN_PARENT_DOCKER_ENV = ("DOCKER_HOST", "DOCKER_CONTEXT")
+FORBIDDEN_PARENT_DOCKER_ENV = ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
 DOCKER_ENV_PREFIXES_TO_CLEAR = ("COMPOSE_",)
 PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 TELEMETRY_ENV_VARS = (
@@ -414,8 +416,48 @@ def parse_docker_context_endpoint(output: str) -> str:
 
 
 def is_local_docker_endpoint(endpoint: str) -> bool:
+    if has_control_character(endpoint):
+        return False
+
+    parsed = urlsplit(endpoint)
+    scheme = parsed.scheme.lower()
+    if parsed.query or parsed.fragment or parsed.username or parsed.password:
+        return False
+
+    if scheme == "unix":
+        return is_local_unix_docker_endpoint(parsed.netloc, parsed.path)
+    if scheme == "npipe":
+        return is_local_npipe_docker_endpoint(endpoint)
+    return False
+
+
+def is_local_unix_docker_endpoint(authority: str, path: str) -> bool:
+    if authority or not path.startswith("/") or path.startswith("//") or "\\" in path:
+        return False
+    if "%" in path or has_control_character(path):
+        return False
+    if unquote(path) != path:
+        return False
+
+    return (
+        path == "/var/run/docker.sock"
+        or re.fullmatch(r"/run/user/[0-9]+/docker\.sock", path) is not None
+        or path == str(Path.home() / ".docker" / "desktop" / "docker.sock")
+    )
+
+
+def is_local_npipe_docker_endpoint(endpoint: str) -> bool:
+    if "%" in endpoint:
+        return False
     normalized = endpoint.lower()
-    return normalized.startswith("unix://") or normalized.startswith("npipe://")
+    return normalized in {
+        "npipe:////./pipe/docker_engine",
+        "npipe:////localhost/pipe/docker_engine",
+    }
+
+
+def has_control_character(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
 
 
 def clear_child_only_environment(env: dict[str, str]) -> None:
