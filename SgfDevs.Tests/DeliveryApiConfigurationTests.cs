@@ -10,7 +10,7 @@ namespace SgfDevs.Tests;
 public class DeliveryApiConfigurationTests
 {
     private static readonly string[] PublicTypes =
-        ["home", "events", "event", "companies", "groups", "jobs"];
+        ["home", "events", "event", "companies", "groups", "jobs", "page"];
 
     [Theory]
     [InlineData(false)]
@@ -37,18 +37,40 @@ public class DeliveryApiConfigurationTests
         }
 
         Assert.False(settings.IsAllowedContentType("futurePrivateType"));
+        foreach (var alias in new[] { "group", "company", "job", "leadership", "member", "markdown", "richTextEditor", "about" })
+        {
+            Assert.False(settings.IsAllowedContentType(alias));
+        }
+        Assert.False(settings.RichTextOutputAsJson);
     }
 
     [Fact]
-    public void AllowedSchemas_ContainOnlyReviewedPropertiesAndNoCompositions()
+    public void AllowedSchemas_ContainOnlyReviewedPropertiesAndPageMeta()
     {
         foreach (var alias in PublicTypes)
         {
             var root = XDocument.Load(Path.Combine(ProjectDirectory, $"uSync/v18/ContentTypes/{alias}.config")).Root!;
             Assert.Equal("false", root.Element("Info")!.Element("IsElement")!.Value);
-            Assert.Empty(root.Descendants("Composition"));
-
             var properties = root.Descendants("GenericProperty").ToArray();
+            if (alias == "page")
+            {
+                Assert.Equal(["meta"], root.Descendants("Composition").Select(p => p.Value));
+                Assert.Equal(["blocks"], properties.Select(p => p.Element("Alias")!.Value));
+                Assert.Equal(["Umbraco.BlockList"], properties.Select(p => p.Element("Type")!.Value));
+                var meta = XDocument.Load(Path.Combine(ProjectDirectory, "uSync/v18/ContentTypes/meta.config")).Root!;
+                Assert.Empty(meta.Descendants("Composition"));
+                Assert.Equal(["OgImage", "description", "titleTag"],
+                    meta.Descendants("GenericProperty").Select(p => p.Element("Alias")!.Value).Order(StringComparer.Ordinal));
+                foreach (var blockAlias in new[] { "markdown", "richtexteditor" })
+                {
+                    var block = XDocument.Load(Path.Combine(ProjectDirectory, $"uSync/v18/ContentTypes/{blockAlias}.config")).Root!;
+                    Assert.Empty(block.Descendants("Composition"));
+                    Assert.Equal(["content"], block.Descendants("GenericProperty").Select(p => p.Element("Alias")!.Value));
+                }
+                continue;
+            }
+
+            Assert.Empty(root.Descendants("Composition"));
             if (alias == "event")
             {
                 Assert.Equal(["date", "helpTextPresentations"], properties.Select(p => p.Element("Alias")!.Value).Order());
