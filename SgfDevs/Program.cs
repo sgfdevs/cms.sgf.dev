@@ -1,6 +1,8 @@
 using System;
 using System.Data.Common;
 using System.Threading.Tasks;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
@@ -90,6 +92,28 @@ builder.Services.AddOpenApi("sgf-public-v1", options =>
 });
 builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
 
+builder.Services.AddOpenApi("sgf-member-v1", options =>
+{
+    options.ShouldInclude = description => description.ActionDescriptor is ControllerActionDescriptor action &&
+        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session";
+    options.AddDocumentTransformer((document, _, _) =>
+    {
+        document.Info = new OpenApiInfo { Title = "SGF private member bridge", Version = "1.0" };
+        return Task.CompletedTask;
+    });
+});
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/login", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(context.Request.Method)
+            ? RateLimitPartition.GetFixedWindowLimiter("member-login", _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+            })
+            : RateLimitPartition.GetNoLimiter("other"));
+});
+
 builder.Services.AddHealthChecks()
     .AddCheck<ReadinessHealthCheck>("ready", tags: ["ready"]);
 builder.Services.AddHttpClient();
@@ -148,6 +172,9 @@ app.MapGet("/robots.txt", (IOptions<SiteFeaturesOptions> siteFeatures) =>
         "text/plain"
     )
 ).AllowAnonymous();
+
+app.UseMiddleware<MemberBridge>();
+app.UseRateLimiter();
 
 app.UseUmbraco()
     .WithMiddleware(u =>
