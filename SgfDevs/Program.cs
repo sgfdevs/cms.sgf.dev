@@ -43,6 +43,7 @@ var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddWebsite()
     .AddDeliveryApi()
     .AddComposers();
+umbracoBuilder.PropertyValueConverters().Append<CompanyTagDeliveryValueConverter>();
 LocalBootstrapTelemetryGuard.RemoveTelemetryJob(builder.Services, localBootstrapGuardResult);
 
 if (!string.IsNullOrEmpty(builder.Configuration["Umbraco:Storage:Cdn:Url"]))
