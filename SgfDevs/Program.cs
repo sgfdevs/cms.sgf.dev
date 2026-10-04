@@ -5,7 +5,9 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Data.Sqlite;
+using Microsoft.OpenApi;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -17,6 +19,7 @@ using SgfDevs.Dev.EventSync.Sessionize;
 using SgfDevs.HealthChecks;
 using SGFDevs.Dev;
 using Umbraco.Cms.Core.DependencyInjection;
+using Umbraco.Cms.Api.Common.DependencyInjection;
 using Umbraco.Cms.Core.Sync;
 using Umbraco.Cms.Infrastructure.DependencyInjection;
 using Umbraco.Cms.Persistence.Sqlite;
@@ -49,6 +52,33 @@ if (!Enum.TryParse(serverRoleName, false, out ServerRole serverRole) ||
 
 umbracoBuilder.SetServerRegistrar(new FixedServerRoleAccessor(serverRole));
 umbracoBuilder.Build();
+
+builder.Services.AddOpenApi("sgf-public-v1", options =>
+{
+    options.AddDocumentTransformer((document, _, _) =>
+    {
+        document.Info = new OpenApiInfo
+        {
+            Title = "SGF public API",
+            Version = "1.0",
+            Description = "Typed public endpoints for SGF directory clients."
+        };
+        return Task.CompletedTask;
+    });
+    options.ShouldInclude = apiDescription =>
+    {
+        if (apiDescription.ActionDescriptor is not ControllerActionDescriptor actionDescriptor)
+        {
+            return false;
+        }
+
+        return actionDescriptor.AttributeRouteInfo?.Name is
+            "Directory_GetSkillNames" or
+            "Directory_GetSkillFilters" or
+            "Directory_Search";
+    };
+});
+builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
 
 builder.Services.AddHealthChecks()
     .AddCheck<ReadinessHealthCheck>("ready", tags: ["ready"]);

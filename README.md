@@ -75,11 +75,14 @@ access control.
 OpenAPI uses Umbraco 18's built-in document and UI routes:
 
 - Delivery API JSON: `/umbraco/openapi/delivery.json`
+- SGF public API JSON: `/umbraco/openapi/sgf-public-v1.json`
 - Swagger UI: `/umbraco/openapi`
 - Content endpoints: `/umbraco/delivery/api/v2/content` and
   `/umbraco/delivery/api/v2/content/item/{id-or-path}`
 
-OpenAPI remains unavailable in Production by Umbraco's default. In local
+The SGF public API document is filtered to the typed public directory endpoints
+and excludes newsletter, account, profile image, redirects, and raw Delivery API
+schemas. OpenAPI remains unavailable in Production by Umbraco's default. In local
 Development, use the origin printed by `dotnet run` with the paths above.
 Content-type schema generation stays disabled to avoid publishing private model
 properties or unrelated media schemas. No production OpenAPI override is added.
