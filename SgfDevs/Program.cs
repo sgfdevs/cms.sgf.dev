@@ -28,7 +28,9 @@ using Umbraco.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
+LocalSchemaBootstrapGuard.RejectUnsupportedConfigPath(builder.Configuration, builder.Environment);
 var localBootstrapConfigLoaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
+LocalSchemaBootstrapGuard.RejectUnsupportedEffectiveRequest(builder.Configuration, builder.Environment);
 var localBootstrapGuardResult = LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
 LocalBootstrapEffectivePolicyValidator.Validate(builder.Configuration, localBootstrapGuardResult, localBootstrapConfigLoaded);
 

@@ -103,7 +103,9 @@ public sealed class LocalBootstrapConfigurationTests
     {
         var program = File.ReadAllText(Path.Combine(ProjectDirectory, "Program.cs"));
 
+        var schemaPathGuardIndex = program.IndexOf("LocalSchemaBootstrapGuard.RejectUnsupportedConfigPath", StringComparison.Ordinal);
         var loaderIndex = program.IndexOf("LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration", StringComparison.Ordinal);
+        var schemaEffectiveGuardIndex = program.IndexOf("LocalSchemaBootstrapGuard.RejectUnsupportedEffectiveRequest", StringComparison.Ordinal);
         var guardIndex = program.IndexOf("LocalBootstrapGuard.ValidateStartupConfiguration", StringComparison.Ordinal);
         var createBuilderIndex = program.IndexOf("builder.CreateUmbracoBuilder()", StringComparison.Ordinal);
         var effectivePolicyIndex = program.IndexOf("LocalBootstrapEffectivePolicyValidator.Validate", StringComparison.Ordinal);
@@ -112,9 +114,13 @@ public sealed class LocalBootstrapConfigurationTests
         var buildIndex = program.IndexOf("umbracoBuilder.Build()", StringComparison.Ordinal);
         var bootIndex = program.IndexOf("app.BootUmbracoAsync()", StringComparison.Ordinal);
 
+        Assert.True(schemaPathGuardIndex >= 0, "Program.cs must reject unsupported schema profile paths before loading config.");
         Assert.True(loaderIndex >= 0, "Program.cs must load explicit local bootstrap config before the guard.");
+        Assert.True(schemaEffectiveGuardIndex >= 0, "Program.cs must reject unsupported schema phase requests before the DB guard.");
         Assert.True(guardIndex >= 0, "Program.cs must call the local bootstrap guard.");
-        Assert.True(loaderIndex < guardIndex, "The local bootstrap config loader must run before the DB guard.");
+        Assert.True(schemaPathGuardIndex < loaderIndex, "Unsupported schema profile paths must fail before config loading.");
+        Assert.True(loaderIndex < schemaEffectiveGuardIndex, "The local bootstrap config loader must run before effective schema request checks.");
+        Assert.True(schemaEffectiveGuardIndex < guardIndex, "Unsupported schema phases must fail before DB guard parsing.");
         Assert.True(guardIndex < effectivePolicyIndex, "The DB guard must run before complete effective-policy validation.");
         Assert.True(effectivePolicyIndex < sentryIndex, "Complete effective-policy validation must run before Sentry registration.");
         Assert.True(effectivePolicyIndex < createBuilderIndex, "Complete effective-policy validation must run before CreateUmbracoBuilder.");

@@ -44,7 +44,13 @@ public static class LocalBootstrapConfigurationLoader
                 $"{ConfigPathEnvironmentVariable} must point under {allowedDirectory}.");
         }
 
-        if (!string.Equals(Path.GetFileName(configPath), ConfigFileName, StringComparison.Ordinal))
+        var fileName = Path.GetFileName(configPath);
+        if (LocalSchemaBootstrapGuard.IsManagedProfileFileName(fileName))
+        {
+            throw new LocalBootstrapConfigurationException(LocalSchemaBootstrapGuard.UnsupportedMessage);
+        }
+
+        if (!string.Equals(fileName, ConfigFileName, StringComparison.Ordinal))
         {
             throw new LocalBootstrapConfigurationException(
                 $"{ConfigPathEnvironmentVariable} must point at {ConfigFileName}.");
