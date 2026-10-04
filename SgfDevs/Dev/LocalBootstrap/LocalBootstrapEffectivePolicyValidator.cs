@@ -32,10 +32,72 @@ public static class LocalBootstrapEffectivePolicyValidator
         "AWS_CONFIG_FILE"
     ];
 
-    public static void Validate(IConfiguration configuration, LocalBootstrapGuardResult guardResult)
+    private static readonly string[] ForbiddenProxyKeys =
+    [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy"
+    ];
+
+    private static readonly string[] ForbiddenTelemetryKeys =
+    [
+        "Sentry:Dsn",
+        "Sentry__Dsn",
+        "SENTRY_DSN",
+        "SENTRY__DSN",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        "OTEL_TRACES_EXPORTER",
+        "OTEL_METRICS_EXPORTER",
+        "OTEL_LOGS_EXPORTER",
+        "OpenTelemetry:Exporter:Otlp:Endpoint",
+        "OpenTelemetry:Exporter:Otlp:Protocol",
+        "OpenTelemetry:Exporter:Otlp:Headers",
+        "OpenTelemetry__Exporter__Otlp__Endpoint",
+        "OpenTelemetry__Exporter__Otlp__Protocol",
+        "OpenTelemetry__Exporter__Otlp__Headers"
+    ];
+
+    private static readonly string[] ForbiddenDotNetInstrumentationKeys =
+    [
+        "DOTNET_STARTUP_HOOKS",
+        "DOTNET_ADDITIONAL_DEPS",
+        "DOTNET_SHARED_STORE",
+        "CORECLR_ENABLE_PROFILING",
+        "CORECLR_PROFILER",
+        "CORECLR_PROFILER_PATH",
+        "CORECLR_PROFILER_PATH_64",
+        "CORECLR_PROFILER_PATH_32",
+        "COR_ENABLE_PROFILING",
+        "COR_PROFILER",
+        "COR_PROFILER_PATH",
+        "COR_PROFILER_PATH_64",
+        "COR_PROFILER_PATH_32"
+    ];
+
+    public static void Validate(IConfiguration configuration, LocalBootstrapGuardResult guardResult, bool explicitConfigLoaded = false)
     {
         if (!guardResult.BootstrapEnabled)
         {
+            if (explicitConfigLoaded)
+            {
+                throw new LocalBootstrapConfigurationException(
+                    "Explicit local bootstrap config must keep SGFDevs:LocalBootstrap:Enabled true.");
+            }
+
             return;
         }
 
@@ -56,6 +118,23 @@ public static class LocalBootstrapEffectivePolicyValidator
         RequireValue(configuration, "AWS_SECRET_ACCESS_KEY", RequiredS3SecretKey);
         RequireValue(configuration, "AWS_EC2_METADATA_DISABLED", "true", ignoreCase: true);
         foreach (var key in ForbiddenAwsRoutingKeys)
+        {
+            RequireEmpty(configuration, key);
+        }
+
+        foreach (var key in ForbiddenProxyKeys)
+        {
+            RequireEmpty(configuration, key);
+        }
+
+        foreach (var key in ForbiddenTelemetryKeys)
+        {
+            RequireEmpty(configuration, key);
+        }
+        RequireNoConfiguredKeyPrefix(configuration, "OTEL_");
+        RequireNoConfiguredKeyPrefix(configuration, "OpenTelemetry:");
+
+        foreach (var key in ForbiddenDotNetInstrumentationKeys)
         {
             RequireEmpty(configuration, key);
         }
@@ -153,6 +232,17 @@ public static class LocalBootstrapEffectivePolicyValidator
         if (string.IsNullOrWhiteSpace(configuration[key]))
         {
             throw new LocalBootstrapConfigurationException($"Local bootstrap requires {key} in the generated local policy.");
+        }
+    }
+
+    private static void RequireNoConfiguredKeyPrefix(IConfiguration configuration, string prefix)
+    {
+        foreach (var pair in configuration.AsEnumerable())
+        {
+            if (pair.Value is not null && pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new LocalBootstrapConfigurationException($"Local bootstrap requires {pair.Key} to be empty.");
+            }
         }
     }
 

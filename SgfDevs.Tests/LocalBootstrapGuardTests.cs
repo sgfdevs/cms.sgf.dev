@@ -183,6 +183,22 @@ public sealed class LocalBootstrapGuardTests
         Assert.Contains("CreatedBy", exception.Message);
     }
 
+    [Fact]
+    public void ValidateStartupConfiguration_RejectsExplicitLoadedConfigThatDisablesBootstrapAfterUnsafeOverrides()
+    {
+        using var temp = TempAppRoot.Create();
+        var values = CompleteEffectivePolicy(temp.Path);
+        values["SGFDevs:LocalBootstrap:Enabled"] = "false";
+        values["AWS:ServiceURL"] = "https://s3.amazonaws.com";
+        values["uSync:Settings:ImportAtStartup"] = "All";
+        values["SGFDevs:NewsletterEndpoint"] = "https://example.invalid/newsletter";
+
+        var exception = Assert.Throws<LocalBootstrapConfigurationException>(() =>
+            ValidateStartup(temp.Path, Environments.Development, values, explicitConfigLoaded: true));
+
+        Assert.Contains("Enabled true", exception.Message);
+    }
+
     [Theory]
     [InlineData("AWS_PROFILE", "prod", "AWS_PROFILE")]
     [InlineData("SGFDevs:NewsletterEndpoint", "https://example.invalid/newsletter", "NewsletterEndpoint")]
@@ -193,6 +209,17 @@ public sealed class LocalBootstrapGuardTests
     [InlineData("uSync:Settings:FirstBootGroup", "All", "FirstBootGroup")]
     [InlineData("uSync:Settings:ImportAtStartup", "All", "ImportAtStartup")]
     [InlineData("uSync:Settings:ExportOnSave", "All", "ExportOnSave")]
+    [InlineData("Sentry:Dsn", "https://public@example.invalid/1", "Sentry")]
+    [InlineData("SENTRY_DSN", "https://public@example.invalid/1", "SENTRY_DSN")]
+    [InlineData("OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.example.invalid", "OTEL")]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "api-key=secret", "OTEL")]
+    [InlineData("OTEL_TRACES_EXPORTER", "otlp", "OTEL")]
+    [InlineData("OpenTelemetry:Exporter:Otlp:Endpoint", "https://otel.example.invalid", "OpenTelemetry")]
+    [InlineData("DOTNET_STARTUP_HOOKS", "/tmp/hook.dll", "DOTNET_STARTUP_HOOKS")]
+    [InlineData("CORECLR_ENABLE_PROFILING", "1", "CORECLR_ENABLE_PROFILING")]
+    [InlineData("HTTP_PROXY", "http://proxy.example.invalid", "HTTP_PROXY")]
+    [InlineData("HTTPS_PROXY", "http://proxy.example.invalid", "HTTPS_PROXY")]
+    [InlineData("ALL_PROXY", "socks5://proxy.example.invalid", "ALL_PROXY")]
     public void ValidateStartupConfiguration_RejectsEffectiveBootstrapPolicyTampering(string key, string value, string expectedMessage)
     {
         using var temp = TempAppRoot.Create();
@@ -550,7 +577,8 @@ public sealed class LocalBootstrapGuardTests
     private static LocalBootstrapGuardResult ValidateStartup(
         string appRoot,
         string environmentName,
-        IReadOnlyDictionary<string, string?> values)
+        IReadOnlyDictionary<string, string?> values,
+        bool explicitConfigLoaded = false)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -561,7 +589,7 @@ public sealed class LocalBootstrapGuardTests
             EnvironmentName = environmentName,
             ContentRootPath = appRoot
         });
-        LocalBootstrapEffectivePolicyValidator.Validate(configuration, result);
+        LocalBootstrapEffectivePolicyValidator.Validate(configuration, result, explicitConfigLoaded);
         return result;
     }
 

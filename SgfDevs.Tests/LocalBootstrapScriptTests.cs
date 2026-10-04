@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xunit;
 
 namespace SgfDevs.Tests;
 
+[SupportedOSPlatform("linux")]
 public sealed class LocalBootstrapScriptTests
 {
     [Fact]
@@ -51,7 +53,19 @@ public sealed class LocalBootstrapScriptTests
         Assert.Equal("None", root.GetProperty("uSync").GetProperty("Settings").GetProperty("ExportAtStartup").GetString());
         Assert.Equal("None", root.GetProperty("uSync").GetProperty("Settings").GetProperty("ExportOnSave").GetString());
 
-        Assert.Equal(new[] { "compose", "up", "-d", "seaweedfs" }, await File.ReadAllLinesAsync(temp.DockerArgsPath));
+        Assert.Equal(new[]
+        {
+            "--context",
+            "default",
+            "compose",
+            "-f",
+            Path.Combine(temp.RepoRoot, "compose.yaml"),
+            "--project-name",
+            "sgf-dev-local",
+            "up",
+            "-d",
+            "seaweedfs"
+        }, await File.ReadAllLinesAsync(temp.DockerArgsPath));
         var dotnetArgs = await File.ReadAllLinesAsync(temp.DotnetArgsPath);
         Assert.Contains("run", dotnetArgs);
         Assert.Contains("--no-launch-profile", dotnetArgs);
@@ -69,6 +83,23 @@ public sealed class LocalBootstrapScriptTests
         Assert.Contains("AWS_PROFILE=", childEnv);
         Assert.Contains("AWS_DEFAULT_PROFILE=", childEnv);
         Assert.Contains("AWS_EC2_METADATA_DISABLED=true", childEnv);
+        Assert.Contains("NO_PROXY=127.0.0.1,localhost,::1", childEnv);
+        Assert.Contains("SENTRY_DSN=", childEnv);
+        Assert.Contains("Sentry__Dsn=", childEnv);
+        Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT=", childEnv);
+        Assert.Contains("OTEL_EXPORTER_OTLP_TRACES_HEADERS=", childEnv);
+        Assert.Contains("DOTNET_STARTUP_HOOKS=", childEnv);
+        Assert.Contains("CORECLR_ENABLE_PROFILING=", childEnv);
+        Assert.Contains("HTTP_PROXY=", childEnv);
+        Assert.Contains("HTTPS_PROXY=", childEnv);
+        Assert.Contains("ALL_PROXY=", childEnv);
+
+        var dockerEnv = await File.ReadAllTextAsync(temp.DockerEnvPath);
+        Assert.Contains("COMPOSE_FILE=", dockerEnv);
+        Assert.Contains("COMPOSE_PROJECT_NAME=", dockerEnv);
+        Assert.Contains("DOCKER_HOST=", dockerEnv);
+        Assert.Contains("DOCKER_CONTEXT=", dockerEnv);
+        Assert.Contains("HTTP_PROXY=", dockerEnv);
     }
 
     [Fact]
@@ -90,12 +121,15 @@ public sealed class LocalBootstrapScriptTests
     {
         using var temp = TempScriptWorkspace.Create();
         Directory.CreateDirectory(temp.BootstrapDirectory);
+        File.SetUnixFileMode(temp.BootstrapDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        var originalMode = File.GetUnixFileMode(temp.BootstrapDirectory);
         await File.WriteAllTextAsync(temp.DatabasePath, "not owned");
 
         var result = await temp.RunScriptAsync();
 
         Assert.Equal(2, result.ExitCode);
         Assert.Contains("proves this script owns it", result.Stderr);
+        Assert.Equal(originalMode, File.GetUnixFileMode(temp.BootstrapDirectory));
         Assert.False(File.Exists(temp.DockerArgsPath));
         Assert.False(File.Exists(temp.DotnetArgsPath));
     }
@@ -137,11 +171,84 @@ public sealed class LocalBootstrapScriptTests
         SetJsonValue(root, dottedPath.Split('.'), JsonValue.Create(value)!);
         await File.WriteAllTextAsync(temp.ConfigPath, root.ToJsonString() + "\n");
         File.SetUnixFileMode(temp.ConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.SetUnixFileMode(temp.BootstrapDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        var originalDirectoryMode = File.GetUnixFileMode(temp.BootstrapDirectory);
 
         var result = await temp.RunScriptAsync();
 
         Assert.Equal(2, result.ExitCode);
         Assert.Matches("policy signature|generated local admin password", result.Stderr);
+        Assert.Equal(originalDirectoryMode, File.GetUnixFileMode(temp.BootstrapDirectory));
+        Assert.False(File.Exists(temp.DockerArgsPath));
+        Assert.False(File.Exists(temp.DotnetArgsPath));
+    }
+
+    [Fact]
+    public async Task Script_ClearsInheritedTelemetryProxyAndInstrumentationEnvironmentForCms()
+    {
+        using var temp = TempScriptWorkspace.Create();
+
+        var result = await temp.RunScriptAsync(new Dictionary<string, string>
+        {
+            ["SENTRY_DSN"] = "https://public@example.invalid/1",
+            ["Sentry__Dsn"] = "https://public@example.invalid/2",
+            ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://otel.example.invalid",
+            ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = "api-key=secret",
+            ["DOTNET_STARTUP_HOOKS"] = "/tmp/hook.dll",
+            ["CORECLR_ENABLE_PROFILING"] = "1",
+            ["HTTP_PROXY"] = "http://proxy.example.invalid",
+            ["HTTPS_PROXY"] = "http://proxy.example.invalid",
+            ["ALL_PROXY"] = "socks5://proxy.example.invalid",
+            ["COMPOSE_FILE"] = Path.Combine(temp.Root, "evil-compose.yaml"),
+            ["COMPOSE_PROJECT_NAME"] = "evil-project",
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        var childEnv = await File.ReadAllTextAsync(temp.DotnetEnvPath);
+        Assert.Contains("SENTRY_DSN=", childEnv);
+        Assert.Contains("Sentry__Dsn=", childEnv);
+        Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT=", childEnv);
+        Assert.Contains("OTEL_EXPORTER_OTLP_TRACES_HEADERS=", childEnv);
+        Assert.Contains("DOTNET_STARTUP_HOOKS=", childEnv);
+        Assert.Contains("CORECLR_ENABLE_PROFILING=", childEnv);
+        Assert.Contains("HTTP_PROXY=", childEnv);
+        Assert.Contains("HTTPS_PROXY=", childEnv);
+        Assert.Contains("ALL_PROXY=", childEnv);
+        var dockerEnv = await File.ReadAllTextAsync(temp.DockerEnvPath);
+        Assert.Contains("COMPOSE_FILE=", dockerEnv);
+        Assert.Contains("COMPOSE_PROJECT_NAME=", dockerEnv);
+    }
+
+    [Theory]
+    [InlineData("DOCKER_HOST", "tcp://remote.example.invalid:2376")]
+    [InlineData("DOCKER_CONTEXT", "remote-prod")]
+    public async Task Script_RefusesInjectedRemoteDockerSelectionBeforeCreatingPrivateConfig(string key, string value)
+    {
+        using var temp = TempScriptWorkspace.Create();
+
+        var result = await temp.RunScriptAsync(new Dictionary<string, string>
+        {
+            [key] = value,
+            ["COMPOSE_FILE"] = Path.Combine(temp.Root, "evil-compose.yaml"),
+        });
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("local Docker context", result.Stderr);
+        Assert.False(File.Exists(temp.ConfigPath));
+        Assert.False(File.Exists(temp.DockerArgsPath));
+        Assert.False(File.Exists(temp.DotnetArgsPath));
+    }
+
+    [Fact]
+    public async Task Script_RefusesRemoteDefaultDockerContextBeforeCreatingPrivateConfig()
+    {
+        using var temp = TempScriptWorkspace.Create();
+
+        var result = await temp.RunScriptAsync(new Dictionary<string, string> { ["FAKE_DOCKER_CONTEXT_ENDPOINT"] = "tcp://remote.example.invalid:2376" });
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("not a local endpoint", result.Stderr);
+        Assert.False(File.Exists(temp.ConfigPath));
         Assert.False(File.Exists(temp.DockerArgsPath));
         Assert.False(File.Exists(temp.DotnetArgsPath));
     }
@@ -192,6 +299,7 @@ public sealed class LocalBootstrapScriptTests
             DockerArgsPath = Path.Combine(path, "docker.args");
             DotnetArgsPath = Path.Combine(path, "dotnet.args");
             DotnetEnvPath = Path.Combine(path, "dotnet.env");
+            DockerEnvPath = Path.Combine(path, "docker.env");
             BootstrapDirectory = Path.Combine(RepoRoot, "SgfDevs", "umbraco", "Data", "local-bootstrap");
             ConfigPath = Path.Combine(BootstrapDirectory, "local-bootstrap.appsettings.json");
             DatabasePath = Path.Combine(BootstrapDirectory, "local-bootstrap.sqlite");
@@ -203,6 +311,7 @@ public sealed class LocalBootstrapScriptTests
         public string DockerArgsPath { get; }
         public string DotnetArgsPath { get; }
         public string DotnetEnvPath { get; }
+        public string DockerEnvPath { get; }
         public string BootstrapDirectory { get; }
         public string ConfigPath { get; }
         public string DatabasePath { get; }
@@ -246,6 +355,7 @@ public sealed class LocalBootstrapScriptTests
             startInfo.Environment["FAKE_DOCKER_ARGS"] = DockerArgsPath;
             startInfo.Environment["FAKE_DOTNET_ARGS"] = DotnetArgsPath;
             startInfo.Environment["FAKE_DOTNET_ENV"] = DotnetEnvPath;
+            startInfo.Environment["FAKE_DOCKER_ENV"] = DockerEnvPath;
             startInfo.Environment.Remove("ASPNETCORE_ENVIRONMENT");
             startInfo.Environment.Remove("DOTNET_ENVIRONMENT");
             if (extraEnvironment is not null)
@@ -290,7 +400,18 @@ public sealed class LocalBootstrapScriptTests
         {
             File.WriteAllText(Path.Combine(FakeBin, "docker"), """
             #!/bin/sh
+            if [ "$1" = "context" ] && [ "$2" = "inspect" ]; then
+              printf '"%s"\n' "${FAKE_DOCKER_CONTEXT_ENDPOINT:-unix:///var/run/docker.sock}"
+              exit 0
+            fi
             printf '%s\n' "$@" > "$FAKE_DOCKER_ARGS"
+            {
+              printf 'COMPOSE_FILE=%s\n' "$COMPOSE_FILE"
+              printf 'COMPOSE_PROJECT_NAME=%s\n' "$COMPOSE_PROJECT_NAME"
+              printf 'DOCKER_HOST=%s\n' "$DOCKER_HOST"
+              printf 'DOCKER_CONTEXT=%s\n' "$DOCKER_CONTEXT"
+              printf 'HTTP_PROXY=%s\n' "$HTTP_PROXY"
+            } > "$FAKE_DOCKER_ENV"
             exit 0
             """);
             File.WriteAllText(Path.Combine(FakeBin, "dotnet"), """
@@ -307,6 +428,16 @@ public sealed class LocalBootstrapScriptTests
               printf 'AWS_PROFILE=%s\n' "$AWS_PROFILE"
               printf 'AWS_DEFAULT_PROFILE=%s\n' "$AWS_DEFAULT_PROFILE"
               printf 'AWS_EC2_METADATA_DISABLED=%s\n' "$AWS_EC2_METADATA_DISABLED"
+              printf 'NO_PROXY=%s\n' "$NO_PROXY"
+              printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN"
+              printf 'Sentry__Dsn=%s\n' "$Sentry__Dsn"
+              printf 'OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$OTEL_EXPORTER_OTLP_ENDPOINT"
+              printf 'OTEL_EXPORTER_OTLP_TRACES_HEADERS=%s\n' "$OTEL_EXPORTER_OTLP_TRACES_HEADERS"
+              printf 'DOTNET_STARTUP_HOOKS=%s\n' "$DOTNET_STARTUP_HOOKS"
+              printf 'CORECLR_ENABLE_PROFILING=%s\n' "$CORECLR_ENABLE_PROFILING"
+              printf 'HTTP_PROXY=%s\n' "$HTTP_PROXY"
+              printf 'HTTPS_PROXY=%s\n' "$HTTPS_PROXY"
+              printf 'ALL_PROXY=%s\n' "$ALL_PROXY"
             } > "$FAKE_DOTNET_ENV"
             exit 0
             """);

@@ -27,6 +27,49 @@ LOCAL_S3_BUCKET = "sgf-dev-local"
 LOCAL_S3_ACCESS_KEY = "sgf-dev-local"
 LOCAL_S3_SECRET_KEY = "sgf-dev-local-password"
 POLICY_VERSION = 1
+DOCKER_CONTEXT_NAME = "default"
+DOCKER_PROJECT_NAME = "sgf-dev-local"
+FORBIDDEN_PARENT_DOCKER_ENV = ("DOCKER_HOST", "DOCKER_CONTEXT")
+DOCKER_ENV_PREFIXES_TO_CLEAR = ("COMPOSE_",)
+PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+TELEMETRY_ENV_VARS = (
+    "SENTRY_DSN",
+    "Sentry__Dsn",
+    "SENTRY__DSN",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+    "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+    "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+    "OpenTelemetry__Exporter__Otlp__Endpoint",
+    "OpenTelemetry__Exporter__Otlp__Protocol",
+    "OpenTelemetry__Exporter__Otlp__Headers",
+)
+DOTNET_INSTRUMENTATION_ENV_VARS = (
+    "DOTNET_STARTUP_HOOKS",
+    "DOTNET_ADDITIONAL_DEPS",
+    "DOTNET_SHARED_STORE",
+    "CORECLR_ENABLE_PROFILING",
+    "CORECLR_PROFILER",
+    "CORECLR_PROFILER_PATH",
+    "CORECLR_PROFILER_PATH_64",
+    "CORECLR_PROFILER_PATH_32",
+    "COR_ENABLE_PROFILING",
+    "COR_PROFILER",
+    "COR_PROFILER_PATH",
+    "COR_PROFILER_PATH_64",
+    "COR_PROFILER_PATH_32",
+)
 
 
 class BootstrapError(RuntimeError):
@@ -52,13 +95,32 @@ def main() -> int:
         validate_bootstrap_paths(app_root, bootstrap_dir, database_path, config_path)
         require_executable("docker")
         require_executable("dotnet")
+        docker_env = build_docker_environment(os.environ)
+        verify_local_docker_context(docker_env)
         ensure_bootstrap_files(bootstrap_dir, database_path, config_path)
 
         print(f"Local bootstrap config: {config_path}")
         print("Admin credentials were written to that private gitignored file. The password is not printed.")
         print(f"Local bootstrap database: {database_path}")
-        print(f"Starting SeaweedFS service from {repo_root / 'compose.yaml'} without deleting volumes.")
-        run_checked(["docker", "compose", "up", "-d", "seaweedfs"], cwd=repo_root)
+        compose_file = repo_root / "compose.yaml"
+        print(f"Starting SeaweedFS service from {compose_file} without deleting volumes.")
+        run_checked(
+            [
+                "docker",
+                "--context",
+                DOCKER_CONTEXT_NAME,
+                "compose",
+                "-f",
+                str(compose_file),
+                "--project-name",
+                DOCKER_PROJECT_NAME,
+                "up",
+                "-d",
+                "seaweedfs",
+            ],
+            cwd=repo_root,
+            env=docker_env,
+        )
 
         child_env = build_child_environment(os.environ, config_path, args.port)
         print(f"Starting CMS on http://127.0.0.1:{args.port} with --no-launch-profile. Stop it with Ctrl+C.")
@@ -132,17 +194,19 @@ def validate_bootstrap_paths(app_root: Path, bootstrap_dir: Path, database_path:
 def ensure_bootstrap_files(bootstrap_dir: Path, database_path: Path, config_path: Path) -> None:
     old_umask = os.umask(0o077)
     try:
-        bootstrap_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(bootstrap_dir, 0o700)
+        if not bootstrap_dir.exists():
+            bootstrap_dir.mkdir(mode=0o700, parents=True)
 
         if config_path.exists():
             validate_existing_config(config_path, database_path)
+            os.chmod(bootstrap_dir, 0o700)
         elif database_path.exists():
             raise BootstrapError(
                 "local bootstrap database exists without the private config file that proves this script owns it"
             )
         else:
             write_new_config(config_path, database_path)
+            os.chmod(bootstrap_dir, 0o700)
 
         if database_path.exists() and database_path.is_symlink():
             raise BootstrapError("local bootstrap database cannot be a symbolic link")
@@ -286,6 +350,7 @@ def write_new_config(config_path: Path, database_path: Path) -> None:
 
 def build_child_environment(parent_env: os._Environ[str], config_path: Path, port: int) -> dict[str, str]:
     env = dict(parent_env)
+    clear_child_only_environment(env)
     env.update(
         {
             "ASPNETCORE_ENVIRONMENT": "Development",
@@ -298,9 +363,67 @@ def build_child_environment(parent_env: os._Environ[str], config_path: Path, por
             "AWS_PROFILE": "",
             "AWS_DEFAULT_PROFILE": "",
             "AWS_EC2_METADATA_DISABLED": "true",
+            "NO_PROXY": "127.0.0.1,localhost,::1",
+            "no_proxy": "127.0.0.1,localhost,::1",
         }
     )
     return env
+
+
+def build_docker_environment(parent_env: os._Environ[str]) -> dict[str, str]:
+    for name in FORBIDDEN_PARENT_DOCKER_ENV:
+        if parent_env.get(name):
+            raise BootstrapError(f"{name} is set; local bootstrap only uses the local Docker context")
+
+    env = dict(parent_env)
+    for name in list(env):
+        if name in FORBIDDEN_PARENT_DOCKER_ENV or name in PROXY_ENV_VARS or any(name.startswith(prefix) for prefix in DOCKER_ENV_PREFIXES_TO_CLEAR):
+            env.pop(name, None)
+    return env
+
+
+def verify_local_docker_context(env: dict[str, str]) -> None:
+    completed = subprocess.run(
+        ["docker", "context", "inspect", DOCKER_CONTEXT_NAME, "--format", "{{json .Endpoints.docker.Host}}"],
+        check=False,
+        cwd=Path.cwd(),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise BootstrapError(f"could not inspect local Docker context {DOCKER_CONTEXT_NAME!r}")
+
+    endpoint = parse_docker_context_endpoint(completed.stdout)
+    if not is_local_docker_endpoint(endpoint):
+        raise BootstrapError(f"Docker context {DOCKER_CONTEXT_NAME!r} is not a local endpoint")
+
+
+def parse_docker_context_endpoint(output: str) -> str:
+    value = output.strip()
+    if not value:
+        raise BootstrapError(f"Docker context {DOCKER_CONTEXT_NAME!r} did not report a Docker endpoint")
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = value.strip('"')
+    if not isinstance(parsed, str) or not parsed.strip():
+        raise BootstrapError(f"Docker context {DOCKER_CONTEXT_NAME!r} did not report a Docker endpoint")
+    return parsed.strip()
+
+
+def is_local_docker_endpoint(endpoint: str) -> bool:
+    normalized = endpoint.lower()
+    return normalized.startswith("unix://") or normalized.startswith("npipe://")
+
+
+def clear_child_only_environment(env: dict[str, str]) -> None:
+    for name in list(env):
+        if name.startswith("OTEL_"):
+            env.pop(name, None)
+    for name in PROXY_ENV_VARS + TELEMETRY_ENV_VARS + DOTNET_INSTRUMENTATION_ENV_VARS:
+        env.pop(name, None)
 
 
 def require_executable(name: str) -> None:
@@ -308,9 +431,9 @@ def require_executable(name: str) -> None:
         raise BootstrapError(f"required executable not found on PATH: {name}")
 
 
-def run_checked(command: list[str], cwd: Path) -> None:
+def run_checked(command: list[str], cwd: Path, env: dict[str, str]) -> None:
     require_executable(command[0])
-    completed = subprocess.run(command, cwd=cwd, check=False)
+    completed = subprocess.run(command, cwd=cwd, env=env, check=False)
     if completed.returncode != 0:
         raise BootstrapError(f"command failed with exit code {completed.returncode}: {' '.join(command)}")
 

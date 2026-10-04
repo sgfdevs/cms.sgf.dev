@@ -30,9 +30,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.UseSentry();
 
-LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
+var localBootstrapConfigLoaded = LocalBootstrapConfigurationLoader.AddLocalBootstrapConfiguration(builder.Configuration, builder.Environment);
 var localBootstrapGuardResult = LocalBootstrapGuard.ValidateStartupConfiguration(builder.Configuration, builder.Environment);
-LocalBootstrapEffectivePolicyValidator.Validate(builder.Configuration, localBootstrapGuardResult);
+LocalBootstrapEffectivePolicyValidator.Validate(builder.Configuration, localBootstrapGuardResult, localBootstrapConfigLoaded);
 
 var umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddBackOffice()
