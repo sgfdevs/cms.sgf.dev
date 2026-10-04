@@ -1,6 +1,9 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using SgfDevs.Dev.LocalBootstrap;
+using uSync.BackOffice.Configuration;
 using Xunit;
 
 namespace SgfDevs.Tests;
@@ -168,6 +171,40 @@ public sealed class LocalSchemaBootstrapPolicyValidatorTests
 
         Assert.Throws<LocalBootstrapConfigurationException>(() =>
             LocalSchemaBootstrapPolicyValidator.Validate(configuration, Environments.Development));
+    }
+
+    [Fact]
+    public void Validate_RejectsDefaultHandlerGroupThatWouldMoveAllowedHandlersOutOfSettings()
+    {
+        var contentDefault = BuildConfiguration(
+            LocalSchemaBootstrapGuard.PhaseFirstboot,
+            new Dictionary<string, string?>
+            {
+                ["uSync:Sets:Default:HandlerDefaults:Group"] = "Content"
+            });
+        var contentDefaultGroups = EffectiveAllowedHandlerGroups(contentDefault);
+
+        Assert.Equal("Content", contentDefaultGroups["LanguageHandler"]);
+        Assert.Equal("Content", contentDefaultGroups["DataTypeHandler"]);
+        Assert.Equal("Content", contentDefaultGroups["TemplateHandler"]);
+        Assert.Equal("Content", contentDefaultGroups["ContentTypeHandler"]);
+        Assert.Equal("Content", contentDefaultGroups["MediaTypeHandler"]);
+        Assert.Equal("Content", contentDefaultGroups["MemberTypeHandler"]);
+        Assert.Equal(LocalSchemaBootstrapPolicyValidator.RequiredGroup, contentDefaultGroups["RelationTypeHandler"]);
+        Assert.Throws<LocalBootstrapConfigurationException>(() =>
+            LocalSchemaBootstrapPolicyValidator.Validate(contentDefault, Environments.Development));
+
+        var settingsDefault = BuildConfiguration(
+            LocalSchemaBootstrapGuard.PhaseFirstboot,
+            new Dictionary<string, string?>
+            {
+                ["uSync:Sets:Default:HandlerDefaults:Group"] = LocalSchemaBootstrapPolicyValidator.RequiredGroup
+            });
+
+        LocalSchemaBootstrapPolicyValidator.Validate(settingsDefault, Environments.Development);
+        Assert.All(
+            EffectiveAllowedHandlerGroups(settingsDefault),
+            pair => Assert.Equal(LocalSchemaBootstrapPolicyValidator.RequiredGroup, pair.Value));
     }
 
     [Fact]
@@ -346,6 +383,20 @@ public sealed class LocalSchemaBootstrapPolicyValidatorTests
         return new ConfigurationBuilder()
             .AddInMemoryCollection(values)
             .Build();
+    }
+
+    private static IReadOnlyDictionary<string, string?> EffectiveAllowedHandlerGroups(IConfiguration configuration)
+    {
+        var services = new ServiceCollection();
+        services.ConfigureHandlerSet(LocalSchemaBootstrapPolicyValidator.RequiredDefaultSet, configuration.GetSection("uSync:Sets:Default"));
+        using var provider = services.BuildServiceProvider();
+        var set = provider.GetRequiredService<IOptionsMonitor<uSyncHandlerSetSettings>>()
+            .Get(LocalSchemaBootstrapPolicyValidator.RequiredDefaultSet);
+
+        return LocalSchemaBootstrapPolicyValidator.AllowedHandlers.ToDictionary(
+            alias => alias,
+            alias => (string?)set.GetHandlerSettings(alias).Group,
+            StringComparer.Ordinal);
     }
 
     private static Dictionary<string, string?> BaseValues(string phase)

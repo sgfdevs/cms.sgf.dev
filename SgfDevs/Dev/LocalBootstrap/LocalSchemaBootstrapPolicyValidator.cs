@@ -169,6 +169,12 @@ public static class LocalSchemaBootstrapPolicyValidator
 
         RequireBoolean(configuration, "uSync:Sets:Default:Enabled", expected: true);
         RequireBoolean(configuration, "uSync:Sets:Default:HandlerDefaults:Enabled", expected: false);
+        var defaultGroup = configuration["uSync:Sets:Default:HandlerDefaults:Group"];
+        if (defaultGroup is { Length: > 0 } && !string.Equals(defaultGroup, RequiredGroup, StringComparison.Ordinal))
+        {
+            throw new LocalBootstrapConfigurationException("Schema uSync policy requires HandlerDefaults group to be Settings when supplied.");
+        }
+
         RequireExactArray(configuration, "uSync:Sets:Default:HandlerDefaults:Actions", [RequiredAction]);
         RequireExactArray(configuration, "uSync:Sets:Default:DisabledHandlers", DeniedHandlers);
 
