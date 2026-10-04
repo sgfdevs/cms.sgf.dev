@@ -95,7 +95,7 @@ builder.Services.AddOpenApiDocumentToUi("sgf-public-v1", "SGF public API v1");
 builder.Services.AddOpenApi("sgf-member-v1", options =>
 {
     options.ShouldInclude = description => description.ActionDescriptor is ControllerActionDescriptor action &&
-        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session" or "Member_Register" or "Member_ForgotPassword" or "Member_ResetPassword" or "Member_Profile" or "Member_ProfileUpdate" or "Member_AvatarUpload";
+        action.AttributeRouteInfo?.Name is "Member_Login" or "Member_Logout" or "Member_Session" or "Member_Register" or "Member_ForgotPassword" or "Member_ResetPassword" or "Member_Profile" or "Member_ProfileUpdate" or "Member_AvatarUpload" or "Newsletter_Signup";
     options.AddDocumentTransformer((document, _, _) =>
     {
         document.Info = new OpenApiInfo { Title = "SGF private member bridge", Version = "1.0" };
@@ -110,7 +110,8 @@ builder.Services.AddRateLimiter(options =>
          string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/register", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/forgot-password", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/reset-password", StringComparison.OrdinalIgnoreCase) ||
-         string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/avatar", StringComparison.OrdinalIgnoreCase)) && HttpMethods.IsPost(context.Request.Method)
+         string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/avatar", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(context.Request.Path.Value?.TrimEnd('/'), "/api/v1/member/newsletter", StringComparison.OrdinalIgnoreCase)) && HttpMethods.IsPost(context.Request.Method)
             ? RateLimitPartition.GetFixedWindowLimiter(context.Request.Path.Value!.TrimEnd('/').ToLowerInvariant(), _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = context.Request.Path.Value!.TrimEnd('/').Equals("/api/v1/member/avatar", StringComparison.OrdinalIgnoreCase) ? 5 : 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
@@ -121,6 +122,14 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddHealthChecks()
     .AddCheck<ReadinessHealthCheck>("ready", tags: ["ready"]);
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(NewsletterHelper.ClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(6);
+    client.MaxResponseContentBufferSize = 16 * 1024;
+}).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler
+{
+    AllowAutoRedirect = false, UseCookies = false
+}).RemoveAllLoggers();
 builder.Services.Configure<EventSyncOptions>(builder.Configuration.GetSection("SGFDevs"));
 builder.Services.Configure<SiteFeaturesOptions>(builder.Configuration.GetSection("SGFDevs:Site"));
 builder.Services.AddScoped<MemberConverter>();
