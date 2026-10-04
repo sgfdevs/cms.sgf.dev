@@ -32,7 +32,7 @@ public sealed class MemberAvatarController(
     [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<ActionResult<MemberAvatarResult>> Upload([FromForm(Name = "file"), Required] IFormFile file)
+    public async Task<ActionResult<MemberAvatarResult>> Upload([Required] IFormFile file)
     {
         var auth = await HttpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
         HttpContext.User = auth.Succeeded && auth.Principal is not null ? auth.Principal : new();
