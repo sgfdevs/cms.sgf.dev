@@ -26,6 +26,7 @@ public class PublicGroupSkillDto
 {
     public string Name { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;
+    public string DirectoryFilterValue { get; set; } = string.Empty;
 }
 
 public class PublicGroupLeaderDto

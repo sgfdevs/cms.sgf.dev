@@ -103,7 +103,9 @@ public class PublicGroupService(
                 skills.Add(new PublicGroupSkillDto
                 {
                     Name = string.IsNullOrEmpty(tag.DisplayName) ? tag.Name : tag.DisplayName,
-                    Slug = slug
+                    Slug = slug,
+                    // The directory indexes published tag GUIDs in skillKeys.
+                    DirectoryFilterValue = tag.Key.ToString()
                 });
             }
         }
