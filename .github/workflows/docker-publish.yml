@@ -9,6 +9,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # Publishes ghcr.io/sgfdevs/cms.sgf.dev in this repository.
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:

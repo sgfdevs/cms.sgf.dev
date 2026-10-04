@@ -50,12 +50,13 @@ jobs:
     needs:
       - release
       - docker
-    if: ${{ needs.release.outputs.new-release-published == 'true' }}
+    # Temporarily disabled. Remove "false &&" when CMS deployment is ready.
+    if: ${{ false && needs.release.outputs.new-release-published == 'true' }}
     uses: glitchedmob/infra-gha/.github/workflows/kustomize-image-pr.yml@v0.11.3
     with:
       deployment-repository: sgfdevs/infra-k8s-apps
-      kustomization-path: src/k8s/apps/sgf.dev/staging
-      image: ghcr.io/sgfdevs/sgf.dev
+      kustomization-path: src/k8s/apps/cms.sgf.dev/staging
+      image: ghcr.io/sgfdevs/cms.sgf.dev
       image-tag: ${{ needs.release.outputs.release-version }}
       source-ref: v${{ needs.release.outputs.release-version }}
       promotion-id: staging
@@ -69,12 +70,13 @@ jobs:
       - release
       - docker
       - promote-staging
-    if: ${{ needs.release.outputs.new-release-published == 'true' }}
+    # Temporarily disabled. Remove "false &&" when CMS deployment is ready.
+    if: ${{ false && needs.release.outputs.new-release-published == 'true' }}
     uses: glitchedmob/infra-gha/.github/workflows/kustomize-image-pr.yml@v0.11.3
     with:
       deployment-repository: sgfdevs/infra-k8s-apps
-      kustomization-path: src/k8s/apps/sgf.dev/production
-      image: ghcr.io/sgfdevs/sgf.dev
+      kustomization-path: src/k8s/apps/cms.sgf.dev/production
+      image: ghcr.io/sgfdevs/cms.sgf.dev
       image-tag: ${{ needs.release.outputs.release-version }}
       source-ref: v${{ needs.release.outputs.release-version }}
       promotion-id: production
