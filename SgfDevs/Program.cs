@@ -24,6 +24,7 @@ using SGFDevs.Dev;
 using Umbraco.Cms.Core.DependencyInjection;
 using Umbraco.Cms.Api.Common.DependencyInjection;
 using Umbraco.Cms.Core.Sync;
+using Umbraco.Cms.Web.Common.ApplicationBuilder;
 using Umbraco.Cms.Infrastructure.DependencyInjection;
 using Umbraco.Cms.Persistence.Sqlite;
 using Umbraco.Extensions;
@@ -108,6 +109,12 @@ builder.Services.AddOpenApi("sgf-member-v1", options =>
         return Task.CompletedTask;
     });
 });
+builder.Services.AddCors();
+builder.Services.Configure<UmbracoPipelineOptions>(options => options.AddFilter(
+    new UmbracoPipelineFilter("member-bridge-cors")
+    {
+        PostRouting = app => app.UseCors()
+    }));
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
