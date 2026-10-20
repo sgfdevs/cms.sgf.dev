@@ -29,6 +29,8 @@ using Umbraco.Extensions;
 
 namespace SGFDevs.Controllers;
 
+// Legacy Razor views still reference this type. Only the private bridge handles member mutations.
+[NonController]
 [AutoValidateAntiforgeryToken]
 public class AccountController : SurfaceController
 {
