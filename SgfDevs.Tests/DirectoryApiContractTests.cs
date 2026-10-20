@@ -152,12 +152,4 @@ public class DirectoryApiContractTests
         return contentTypes.ToArray();
     }
 
-    [Fact]
-    public void ProfileImageEndpoint_RemainsMemberProtected()
-    {
-        var method = typeof(DevsApiController).GetMethod(nameof(DevsApiController.UploadProfileImage))!;
-
-        Assert.Contains(method.GetCustomAttributes(), attribute =>
-            attribute.GetType().Name == "UmbracoMemberAuthorizeAttribute");
-    }
 }

@@ -146,6 +146,11 @@ with an `Origin` header. Native CORS middleware handles `[DisableCors]` endpoint
 metadata; it does not authorize browser CMS access. Do not add browser CMS calls,
 a permissive CORS policy or a frontend-origin allowlist as a workaround.
 
+Legacy account surface actions are disabled. The old `/api/profile/image-process`
+and `/api/newsletter/signup` routes are removed. All member and newsletter writes
+now use the private bridge. The legacy account controller type remains only so
+historical Razor views compile.
+
 A bounded native-CMS journey passed real login, session, logout, SMTP delivery and
 password reset. It used a synthetic member created through the native member
 manager in a builtin-member-only database. That runtime lacks the legacy SGF
