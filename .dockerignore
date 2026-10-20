@@ -1,6 +1,8 @@
 **/.classpath
 **/.dockerignore
 **/.env
+**/.env.*
+**/*.bak
 **/.git
 **/.gitignore
 **/.github
@@ -26,5 +28,7 @@ LICENSE
 README.md
 SgfDevs.Tests
 SgfDevs.slnx
-SgfDevs/Umbraco/Logs
-SgfDevs/Umbraco/Data
+SgfDevs/umbraco/Logs
+SgfDevs/umbraco/Data
+SgfDevs/umbraco/TEMP
+SgfDevs/wwwroot/media
